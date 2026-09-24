@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.python-version
+
+# Environments and tools
+.venv/
+venv/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.mypy_cache/
+.pyrefly/
+
+# Builds and documentation
+build/
+dist/
+site/
+*.egg-info/
+
+# Local state
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+benchmark-results.json
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
