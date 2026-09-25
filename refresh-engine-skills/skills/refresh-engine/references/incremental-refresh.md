@@ -1,7 +1,7 @@
 # Incremental refresh and refresh modes
 
 Source: `docs/guides/refresh-modes.md`, `src/refresh_engine/planning/planner.py`,
-`examples/01_basic_and_modes.py` (verified output below).
+[`examples/01_basic_and_modes.py`](https://github.com/smuniharish/refresh-engine/blob/main/examples/01_basic_and_modes.py).
 
 ## The four modes (`RefreshMode`)
 

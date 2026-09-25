@@ -2,7 +2,7 @@
 
 Source: `src/refresh_engine/planning/dependency.py`,
 `src/refresh_engine/planning/planner.py`,
-`examples/02_dependencies_and_fingerprints.py` (verified output below).
+[`examples/02_dependencies_and_fingerprints.py`](https://github.com/smuniharish/refresh-engine/blob/main/examples/02_dependencies_and_fingerprints.py).
 
 ## Model
 
