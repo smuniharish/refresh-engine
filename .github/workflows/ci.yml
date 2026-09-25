@@ -34,6 +34,7 @@ jobs:
       - run: uv run python scripts/check_docs_examples.py
       - run: uv run python scripts/run_examples.py
       - run: uv run mkdocs build --strict
+      - run: uv run python scripts/validate_refresh_engine_skill.py
 
   distribution:
     runs-on: ubuntu-latest

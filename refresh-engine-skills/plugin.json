@@ -1,0 +1,11 @@
+{
+  "name": "refresh-engine",
+  "version": "0.1.0",
+  "description": "Portable Agent Skills distribution for the refresh-engine Python package.",
+  "homepage": "https://refresh-engine.readthedocs.io",
+  "repository": "https://github.com/smuniharish/refresh-engine",
+  "license": "Apache-2.0",
+  "skills": ["./skills/refresh-engine"],
+  "specification": "https://agentskills.io/specification",
+  "$comment": "This root plugin.json is a portable, spec-agnostic manifest for tools that discover skill collections generically (e.g. `npx skills add`). It is not required by Claude Code (see .claude-plugin/plugin.json) or Codex CLI (see .codex-plugin/plugin.json and skills/refresh-engine/agents/openai.yaml), both of which have their own host-specific manifest conventions documented alongside this file."
+}
