@@ -1,0 +1,33 @@
+id: scheduler
+title: "Eval 3 — Scheduled refresh without blocking"
+prompt: >
+  I need refresh-engine to refresh every hour but cannot block my application's
+  main execution. How do I set that up?
+category: scheduling
+difficulty: basic
+expected_behavior:
+  - Recommends AsyncScheduler(callback, interval=3600) for in-process asyncio
+    scheduling, or ExternalSchedulerAdapter when another system (cron, k8s
+    CronJob) already owns timing.
+  - Explains that `await scheduler.start()` only installs the schedule and
+    returns immediately; it does not block waiting for a refresh to finish.
+  - Describes the correct lifecycle — start the scheduler, keep the app running,
+    then stop() the scheduler and close() the engine on shutdown, in that order.
+  - Notes AsyncSchedulerABC's actual methods — start, pause, resume, stop — does
+    not invent extra lifecycle methods.
+  - Does not implement scheduling with time.sleep, threading, or a blocking loop.
+red_flags:
+  - Suggests time.sleep(3600) in a loop, or a synchronous scheduling library
+    without an async bridge.
+  - Claims AsyncScheduler blocks until the first refresh completes.
+  - Omits calling scheduler.stop() / engine.close() on shutdown.
+  - Invents scheduler methods/parameters not in the verified API reference.
+reference_material:
+  - skills/refresh-engine/references/scheduling.md
+  - skills/refresh-engine/examples/scheduled.md
+verification:
+  - Cross-check AsyncScheduler's constructor and method signatures against
+    src/refresh_engine/scheduling/async_scheduler.py.
+  - >
+    Confirm examples/04_async_and_external_scheduling.py runs and produces
+    "external refresh: status=success".

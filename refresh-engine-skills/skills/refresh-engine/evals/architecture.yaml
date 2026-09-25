@@ -1,0 +1,33 @@
+id: architecture
+title: "Eval 6 — Domain coupling / architecture boundary"
+prompt: >
+  Should I build an MCP-specific (or agent/skills-specific) refresh engine on
+  top of refresh-engine?
+category: architecture
+difficulty: intermediate
+expected_behavior:
+  - States that refresh-engine is domain-agnostic infrastructure and has no
+    concept of MCP, agents, skills, or any other specific resource domain.
+  - Recommends keeping domain semantics entirely inside a thin adapter layer
+    (a ResourceSource + RefreshOperation implementation) rather than building
+    a second, parallel "MCP refresh engine" framework.
+  - Explicitly discourages reimplementing change detection, scheduling,
+    dependency graphs, or concurrency control that refresh-engine already
+    provides.
+  - Recommends extension via the documented protocols/ABCs (custom
+    FingerprintStrategy, ResourceSelector, StateStore, etc.) instead of a
+    parallel framework.
+red_flags:
+  - Recommends building a separate framework/engine specific to MCP or agent
+    skills instead of a thin adapter over refresh_engine's existing contracts.
+  - Suggests refresh-engine should be modified/forked to understand MCP
+    concepts natively.
+  - Fails to mention the ResourceSource/RefreshOperation adapter pattern.
+reference_material:
+  - skills/refresh-engine/SKILL.md
+  - skills/refresh-engine/references/architecture.md
+  - skills/refresh-engine/references/integration-patterns.md
+  - skills/refresh-engine/references/troubleshooting.md
+verification:
+  - Confirm against docs/architecture/decisions.md "Domain-neutral core"
+    decision entry and README.md's "domain-neutral" framing.
