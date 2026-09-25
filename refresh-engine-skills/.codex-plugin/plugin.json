@@ -1,9 +1,0 @@
-{
-  "$comment": "INFORMATIONAL ONLY. Codex CLI / ChatGPT do not read a .codex-plugin/plugin.json file — verified against https://learn.chatgpt.com/docs/build-skills (2026). Codex auto-discovers skills by scanning .agents/skills directories (see repository root README) and reads optional presentation metadata from <skill>/agents/openai.yaml. This file exists only to document the plugin identity in a machine-readable, portable shape and to mirror the layout other requested hosts use; it is not consumed by any Codex tooling.",
-  "name": "refresh-engine",
-  "version": "0.1.0",
-  "description": "Agent skill for integrating, extending, configuring, debugging, and testing the refresh-engine Python refresh/change-detection library.",
-  "skills": ["../skills/refresh-engine"],
-  "canonicalDiscoveryPath": ".agents/skills/refresh-engine",
-  "authoritativeMetadata": "../skills/refresh-engine/agents/openai.yaml"
-}

@@ -35,7 +35,7 @@ package's own tests/examples. Format: Problem / Cause / Diagnosis / Solution.
   swallowed instead of raised.
 - **Solution:** set `complete=False` whenever the discovery cannot vouch for
   having seen every resource; only set `complete=True` when you are certain.
-  See [failure-handling.md](failure-handling.md).
+  See [state-management.md](state-management.md).
 
 ## Resources are never deleted even though the source removed them
 
@@ -84,7 +84,7 @@ package's own tests/examples. Format: Problem / Cause / Diagnosis / Solution.
   identity/`correlation_id` to see merges happening.
 - **Solution:** choose `QUEUE` if every request must run to completion
   independently, or `SKIP_IF_RUNNING`/`CANCEL_PREVIOUS` per your freshness vs.
-  throughput trade-off. See [concurrency.md](concurrency.md).
+  throughput trade-off. See [scheduling.md](scheduling.md).
 
 ## State is lost after a restart
 
@@ -101,7 +101,7 @@ package's own tests/examples. Format: Problem / Cause / Diagnosis / Solution.
   success.
 - **Solution:** operations must be idempotent; use destination-side
   idempotency keys when available. This is expected engine behavior, not a
-  bug — see [failure-handling.md](failure-handling.md).
+  bug — see [state-management.md](state-management.md).
 
 ---
 
@@ -121,10 +121,13 @@ package's own tests/examples. Format: Problem / Cause / Diagnosis / Solution.
    `RefreshConfig.max_concurrency`.
 6. **Coupling `refresh_engine` types to a specific domain/framework** (MCP,
    agents, a particular web framework) anywhere outside a single adapter
-   layer (Pattern E in [integration-patterns.md](integration-patterns.md)).
+   layer (Pattern E in [integration.md](integration.md)).
 7. **Inventing APIs not present in `refresh_engine.__all__`** — always verify
-   against the installed package (`python -c "import refresh_engine; print(sorted(refresh_engine.__all__))"`)
-   or [api-reference.md](api-reference.md) before use.
+   against the installed package
+   (`python -c "import refresh_engine; print(sorted(refresh_engine.__all__))"`)
+   or the published
+   [API reference](https://refresh-engine.readthedocs.io/en/latest/api/)
+   before use.
 
 ## Also avoid over-engineering
 
