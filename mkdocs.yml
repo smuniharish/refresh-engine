@@ -56,4 +56,5 @@ nav:
       - Overview: architecture/overview.md
       - Lifecycle: architecture/lifecycle.md
       - Architecture decisions: architecture/decisions.md
+  - Agent Skills: agent-skills.md
 strict: true

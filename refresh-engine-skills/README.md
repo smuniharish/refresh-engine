@@ -29,23 +29,11 @@ or background scheduling. The skill links to the repository's authoritative
 [examples](https://github.com/smuniharish/refresh-engine/tree/main/examples)
 instead of maintaining a second copy of them.
 
-For a host that supports installing skills directly from a Git repository
-(for example the portable
-[`npx skills add`](https://github.com/vercel-labs/skills) CLI), the verified
-command is:
-
-```bash
-npx skills add smuniharish/refresh-engine --skill refresh-engine
-```
-
-This repository intentionally provides no Claude, Codex, or Copilot
-plugin/adapter manifest, because none is required to consume the canonical
-`SKILL.md` — those hosts, and any other Agent Skills–compatible host, can load
-`skills/refresh-engine/SKILL.md` directly (for example by copying or
-symlinking it into the host's own skills directory). Do not assume any other
-install command (e.g. a hypothetical `claude plugin install` or
-`codex plugin add`) works until the corresponding marketplace/registry
-metadata for this repository actually exists.
+For current skills.sh, Claude Code, Codex, Cursor, and GitHub Copilot
+installation instructions, see
+[Agent Skills - refresh-engine](https://refresh-engine.readthedocs.io/en/latest/agent-skills/).
+This repository intentionally provides no Claude, Codex, or Copilot adapter
+because none is required to consume the canonical `SKILL.md`.
 
 ## Maintaining the distribution
 
