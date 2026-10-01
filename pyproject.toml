@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
   "apscheduler>=3.11,<4",
   "networkx>=3.6,<4",
-  "structlog>=25.4,<26",
+  "structlog>=25.4,<27",
   "tenacity>=9.1,<10",
 ]
 
