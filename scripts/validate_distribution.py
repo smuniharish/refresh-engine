@@ -1,9 +1,16 @@
-"""Validate built distributions and smoke-test the wheel in a clean environment."""
+"""Validate the built distributions and smoke-test the wheel in clean environments.
+
+Usage:
+    python scripts/validate_distribution.py dist --python 3.12 --python 3.14
+"""
 
 from __future__ import annotations
 
+import argparse
 import email
+import email.message
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -11,159 +18,184 @@ import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
+from typing import NoReturn
 
-EXPECTED_DEPENDENCIES = {"apscheduler", "networkx", "structlog", "tenacity"}
-FORBIDDEN_WHEEL_PARTS = {"postgres_store.py", "sqlite_store.py", "thread_scheduler.py"}
+ROOT = Path(__file__).resolve().parent.parent
+RUNTIME_DEPENDENCIES = {"structlog", "tenacity"}
+DEVELOPMENT_PREFIXES = ("tests/", "examples/", "scripts/", "docs/", "benchmarks/")
 
-
-def _normalized_requirement_name(requirement: str) -> str:
-    name = requirement.split(";", 1)[0].split("[", 1)[0]
-    for separator in ("<", ">", "=", "!", "~"):
-        name = name.split(separator, 1)[0]
-    return name.strip().lower().replace("_", "-")
-
-
-def _validate_wheel(wheel: Path, expected_version: str) -> None:
-    with zipfile.ZipFile(wheel) as archive:
-        names = archive.namelist()
-        forbidden = {
-            part
-            for part in FORBIDDEN_WHEEL_PARTS
-            if any(name.endswith(part) for name in names)
-        }
-        if forbidden:
-            raise RuntimeError(f"wheel contains private adapters: {sorted(forbidden)}")
-        if not any(name.endswith("refresh_engine/py.typed") for name in names):
-            raise RuntimeError("wheel does not contain the py.typed marker")
-        if any(name.startswith(("tests/", "examples/", "scripts/")) for name in names):
-            raise RuntimeError("wheel contains development-only source files")
-
-        metadata_names = [
-            name for name in names if name.endswith(".dist-info/METADATA")
-        ]
-        if len(metadata_names) != 1:
-            raise RuntimeError("wheel must contain exactly one METADATA file")
-        metadata = email.message_from_bytes(archive.read(metadata_names[0]))
-
-    if metadata["Name"] != "refresh-engine":
-        raise RuntimeError(f"unexpected distribution name: {metadata['Name']}")
-    if metadata["Version"] != expected_version:
-        raise RuntimeError(f"unexpected distribution version: {metadata['Version']}")
-    python_specifiers = {
-        specifier.strip() for specifier in metadata["Requires-Python"].split(",")
-    }
-    if python_specifiers != {">=3.12", "<3.13"}:
-        python_requirement = metadata["Requires-Python"]
-        raise RuntimeError(f"unexpected Python requirement: {python_requirement}")
-    if metadata["Author"] != "S. Muni Harish":
-        raise RuntimeError(f"unexpected author: {metadata['Author']}")
-    if metadata["License-Expression"] != "Apache-2.0":
-        raise RuntimeError(
-            f"unexpected license expression: {metadata['License-Expression']}"
-        )
-
-    dependencies = {
-        _normalized_requirement_name(value)
-        for value in metadata.get_all("Requires-Dist", [])
-    }
-    if dependencies != EXPECTED_DEPENDENCIES:
-        raise RuntimeError(f"unexpected runtime dependencies: {sorted(dependencies)}")
-
-
-def _validate_sdist(sdist: Path) -> None:
-    with tarfile.open(sdist, "r:gz") as archive:
-        names = archive.getnames()
-    required_suffixes = {
-        "LICENSE",
-        "README.md",
-        "pyproject.toml",
-        "src/refresh_engine/py.typed",
-    }
-    missing = {
-        suffix
-        for suffix in required_suffixes
-        if not any(name.endswith(suffix) for name in names)
-    }
-    if missing:
-        raise RuntimeError(f"sdist is missing required files: {sorted(missing)}")
-
-
-def _smoke_test_wheel(wheel: Path, expected_version: str) -> None:
-    with tempfile.TemporaryDirectory(prefix="refresh-engine-wheel-") as directory:
-        environment = Path(directory)
-        command_environment = os.environ | {"UV_SYSTEM_CERTS": "true"}
-        subprocess.run(
-            ["uv", "venv", "--python", "3.12", str(environment)],
-            check=True,
-            env=command_environment,
-        )
-        executable = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
-        python = environment / executable
-        subprocess.run(
-            ["uv", "pip", "install", "--python", str(python), str(wheel)],
-            check=True,
-            env=command_environment,
-        )
-        smoke = f"""
+SMOKE_TEST = """
 import asyncio
-import importlib.util
+import sys
 
 import refresh_engine
-from refresh_engine import (
-    DiscoveryResult,
-    InMemoryStateStore,
-    RefreshEngine,
-    Resource,
-    ResourceSnapshot,
-    StateStore,
-    StateTransaction,
-)
+from refresh_engine import DiscoveryResult, RefreshEngine, Resource, ResourceSnapshot
+
 
 class Source:
     async def discover(self):
-        async def resources():
-            yield Resource("smoke")
-        return DiscoveryResult(resources())
+        return DiscoveryResult([Resource("smoke")])
 
-    async def snapshot(self, resource):
+    async def snapshot(self, resource, /):
         return ResourceSnapshot(resource.resource_id, content="ok")
 
-async def operation(resource, snapshot, action, request):
+
+async def operation(resource, snapshot, action, request, /):
     return None
 
-async def main():
-    engine = RefreshEngine(Source(), operation)
-    assert isinstance(engine.store, InMemoryStateStore)
-    result = await engine.refresh()
-    assert result.refreshed_count == 1
-    await engine.close()
 
-assert refresh_engine.__version__ == {expected_version!r}
-assert StateStore and StateTransaction
-assert not hasattr(refresh_engine, "SQLiteStateStore")
-assert not hasattr(refresh_engine, "PostgresStateStore")
-assert importlib.util.find_spec("refresh_engine.stores.sqlite") is None
+async def main():
+    async with RefreshEngine(Source(), operation) as engine:
+        result = await engine.refresh()
+    assert result.refreshed_count == 1, result
+
+
 asyncio.run(main())
-print("clean wheel smoke test passed")
+assert refresh_engine.__version__ == sys.argv[1], refresh_engine.__version__
+print("smoke test passed on Python", sys.version.split()[0])
 """
-        subprocess.run([str(python), "-c", smoke], check=True)
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"distribution validation failed: {message}")
+
+
+def project_version() -> str:
+    source = (ROOT / "src" / "refresh_engine" / "__init__.py").read_text("utf-8")
+    match = re.search(r'^__version__ = "([^"]+)"$', source, re.MULTILINE)
+    if match is None:
+        fail("cannot find __version__ in src/refresh_engine/__init__.py")
+    return match.group(1)
+
+
+def requirement_name(requirement: str) -> str:
+    match = re.match(r"[A-Za-z0-9._-]+", requirement)
+    if match is None:
+        fail(f"unparsable requirement: {requirement!r}")
+    return match.group(0).lower().replace("_", "-")
+
+
+def validate_wheel(wheel: Path, version: str, requires_python: str) -> None:
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        metadata_files = [
+            name for name in names if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_files) != 1:
+            fail("the wheel must contain exactly one METADATA file")
+        metadata = email.message_from_bytes(archive.read(metadata_files[0]))
+    if "refresh_engine/py.typed" not in names:
+        fail("the wheel does not contain the py.typed marker")
+    if any(name.startswith(DEVELOPMENT_PREFIXES) for name in names):
+        fail("the wheel contains development-only files")
+    if not any(name.endswith(".dist-info/licenses/LICENSE") for name in names):
+        fail("the wheel does not contain the license file")
+    validate_metadata(metadata, version, requires_python)
+
+
+def specifiers(value: str | None) -> set[str]:
+    return {item.strip() for item in (value or "").split(",") if item.strip()}
+
+
+def validate_metadata(
+    metadata: email.message.Message, version: str, requires_python: str
+) -> None:
+    expected = {
+        "Name": "refresh-engine",
+        "Version": version,
+        "License-Expression": "Apache-2.0",
+        "Description-Content-Type": "text/markdown",
+    }
+    for field, value in expected.items():
+        if metadata[field] != value:
+            fail(f"{field} is {metadata[field]!r}, expected {value!r}")
+    if specifiers(metadata["Requires-Python"]) != specifiers(requires_python):
+        fail(f"Requires-Python is {metadata['Requires-Python']!r}")
+    dependencies = {
+        requirement_name(requirement)
+        for requirement in metadata.get_all("Requires-Dist", [])
+        if "extra ==" not in requirement
+    }
+    if dependencies != RUNTIME_DEPENDENCIES:
+        fail(f"runtime dependencies are {sorted(dependencies)}")
+    urls = {url.split(",", 1)[0] for url in metadata.get_all("Project-URL", [])}
+    if not {"Homepage", "Documentation", "Repository", "Issues", "Changelog"} <= urls:
+        fail(f"project URLs are incomplete: {sorted(urls)}")
+    if "Typing :: Typed" not in metadata.get_all("Classifier", []):
+        fail("the Typing :: Typed classifier is missing")
+
+
+def validate_sdist(sdist: Path) -> None:
+    with tarfile.open(sdist, "r:gz") as archive:
+        names = [name.split("/", 1)[1] for name in archive.getnames() if "/" in name]
+    required = {
+        "LICENSE",
+        "README.md",
+        "CHANGELOG.md",
+        "pyproject.toml",
+        "src/refresh_engine/__init__.py",
+        "src/refresh_engine/py.typed",
+        "tests/conftest.py",
+    }
+    missing = required - set(names)
+    if missing:
+        fail(f"the sdist is missing {sorted(missing)}")
+    unexpected = [
+        name
+        for name in names
+        if name.startswith(
+            (
+                ".github/",
+                "benchmarks/",
+                "docs/",
+                "examples/",
+                "refresh-engine-skills/",
+                "scripts/",
+            )
+        )
+    ]
+    if unexpected:
+        fail(f"the sdist contains unexpected files: {unexpected[:5]}")
+
+
+def smoke_test(wheel: Path, version: str, python: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="refresh-engine-smoke-") as directory:
+        venv = Path(directory) / "venv"
+        subprocess.run(
+            ["uv", "venv", "--quiet", "--python", python, str(venv)], check=True
+        )
+        executable = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        install = ["uv", "pip", "install", "--quiet", "--python", str(executable)]
+        subprocess.run([*install, str(wheel)], check=True)
+        subprocess.run(
+            [str(executable), "-W", "error", "-c", SMOKE_TEST, version],
+            check=True,
+            cwd=directory,
+        )
 
 
 def main() -> None:
-    distribution_directory = Path(sys.argv[1] if len(sys.argv) > 1 else "dist")
-    with Path("pyproject.toml").open("rb") as project_file:
-        expected_version = tomllib.load(project_file)["project"]["version"]
-    wheels = list(distribution_directory.glob("refresh_engine-*.whl"))
-    sdists = list(distribution_directory.glob("refresh_engine-*.tar.gz"))
+    parser = argparse.ArgumentParser(description="Validate built distributions.")
+    parser.add_argument("dist", nargs="?", default="dist", type=Path)
+    parser.add_argument(
+        "--python",
+        action="append",
+        dest="pythons",
+        help="Python version for the wheel smoke test; may be repeated",
+    )
+    arguments = parser.parse_args()
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"]
+    version = project_version()
+    wheels = sorted(arguments.dist.glob("refresh_engine-*.whl"))
+    sdists = sorted(arguments.dist.glob("refresh_engine-*.tar.gz"))
     if len(wheels) != 1 or len(sdists) != 1:
-        raise RuntimeError("expected exactly one wheel and one source distribution")
-
-    wheel = wheels[0].resolve()
-    _validate_wheel(wheel, expected_version)
-    _validate_sdist(sdists[0])
-    _smoke_test_wheel(wheel, expected_version)
+        fail("expected exactly one wheel and one sdist")
+    validate_wheel(wheels[0], version, project["requires-python"])
+    validate_sdist(sdists[0])
+    for python in arguments.pythons or ["3.12"]:
+        smoke_test(wheels[0].resolve(), version, python)
     print("distribution validation passed")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

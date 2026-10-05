@@ -1,0 +1,9 @@
+dependency order: refresh schema, refresh tables, refresh views, refresh reports -> success
+tables fails:     refresh schema, refresh tables -> partial
+                  tables: destination unavailable
+                  views: not run because dependency 'tables' failed
+                  reports: not run because dependency 'views' failed
+retry:            refresh tables, refresh views, refresh reports -> success
+deletion:         delete reports -> success
+cycle:            none -> failed
+                  dependency cycle detected: schema -> views -> tables -> schema

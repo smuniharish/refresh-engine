@@ -1,137 +1,60 @@
 # Troubleshooting
 
-Grounded in `docs/architecture/decisions.md`, `docs/guides/*`, and the
-package's own tests/examples. Format: Problem / Cause / Diagnosis / Solution.
+Start with the `RefreshResult`: `status`, `errors` with their `phase`, `warnings`,
+and the counts. Then match the symptom below.
 
-## Everything is reported as `MODIFIED` every refresh
+## Too much work
 
-- **Cause:** the fingerprint strategy includes a non-deterministic or
-  ever-changing value (timestamp, random ID, unordered collection with
-  unstable iteration, an object without a supported canonical form).
-- **Diagnosis:** print/log the `ResourceFingerprint.value` across two
-  back-to-back refreshes with no real source change; if it differs, inspect
-  exactly what your `ResourceSnapshot.content`/`metadata` contains.
-- **Solution:** exclude volatile fields from the snapshot passed into
-  fingerprinting, or use `ContentHash`/`MetadataHash`/a custom
-  `FingerprintStrategy` that normalizes/sorts unstable structures. See
-  [fingerprinting.md](fingerprinting.md).
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Every resource is refreshed on every run. | State is lost between runs: `InMemoryStateStore` in a process that restarts, or a new store per engine. | Use a durable store, and reuse one store instance. |
+| | The fingerprint covers volatile data, such as timestamps or view counts. | Use a narrower strategy, or a custom one that hashes only what the operation uses. |
+| | The store does not return the stored fingerprints. | Make `load_all()` return every field exactly as written. |
+| Every resource is refreshed once after an upgrade or a configuration change. | The fingerprint strategy or encoding changed. | Expected; it happens once. |
+| Unchanged resources are written to the store on every run. | The store changes metadata types, for example tuples into lists, or discovery reports a changing version or cheap indicator. | Round-trip values exactly, and keep versions and indicators stable. |
+| Snapshots are read for unchanged resources. | No cheap indicator, `cheap_indicator_reliable=False`, or a `FULL` or `TARGETED` refresh. | Add a reliable cheap indicator, and use `INCREMENTAL` for routine runs. |
 
-## `FingerprintError: unsupported fingerprint value`
+## Missed changes
 
-- **Cause:** `snapshot.content`/`metadata` contains a type outside the
-  supported set (see [fingerprinting.md](fingerprinting.md)) — e.g. a custom
-  object, an open file handle, or a non-finite float.
-- **Solution:** convert to a supported type (dict/list/str/dataclass/etc.)
-  before constructing the `ResourceSnapshot`, or write a custom
-  `FingerprintStrategy` that performs the conversion.
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| A change is not detected. | A reliable cheap indicator did not change. | Use an indicator that changes with every edit, or mark it unreliable. |
+| | The fingerprint strategy ignores the changed field, for example `ContentHash` with a metadata change. | Use `CompositeHash` or a strategy that covers the field. |
+| Dependents are not refreshed when a dependency changes. | `INCREMENTAL` refreshes only changed resources, or dependencies are not declared. | Use `RefreshMode.DEPENDENCY_AWARE`, and declare dependencies. |
+| A targeted refresh ignores an ID. | The ID was not discovered; see `warnings`. | Check the ID and the discovery. |
 
-## Resources are unexpectedly deleted after a refresh
+## Deletions
 
-- **Cause:** `DiscoveryResult.complete` was `True` when the discovery was
-  actually partial (e.g. pagination truncated early, a filter narrowed
-  results, a permission error silently dropped some items).
-- **Diagnosis:** check whether every expected resource ID was actually
-  yielded by `discover()`, and whether any exception during pagination was
-  swallowed instead of raised.
-- **Solution:** set `complete=False` whenever the discovery cannot vouch for
-  having seen every resource; only set `complete=True` when you are certain.
-  See [state-management.md](state-management.md).
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Deleted resources stay in the destination. | Discovery returned `complete=False`; `warnings` mentions suppressed deletions. | Return a complete listing when it is complete. |
+| | Discovery failed, so the refresh stopped; `errors` has a `discovery` issue. | Fix the source. |
+| | The delete operation failed; `errors` has an `execution` issue. | Fix the operation; the deletion is retried. |
+| Resources were deleted unexpectedly. | Discovery returned an empty or partial listing as complete during an outage. | Raise from `discover()` on failure, and set `complete=False` for partial listings. |
 
-## Resources are never deleted even though the source removed them
+## Statuses and errors
 
-- **Cause:** discovery is (correctly, or incorrectly) reporting
-  `complete=False`.
-- **Diagnosis:** confirm whether your source can actually guarantee
-  completeness; if it can, fix it to report `complete=True`.
-- **Solution:** only report `complete=True` once you've fixed the underlying
-  completeness guarantee — do not force it to unblock deletions if the
-  underlying discovery is genuinely unreliable; that reintroduces the exact
-  risk `complete=False` protects against.
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `PARTIAL` | Some resources failed. | Inspect `errors`; failed resources are retried automatically. |
+| `FAILED` with a `persistence` issue | The state store failed to load or commit. | Check the database; nothing was committed. |
+| `FAILED` with a refresh-level timeout | `TimeoutConfig.overall` expired. | Raise the timeout, or reduce the work per refresh; best-effort progress was committed. |
+| `FAILED` under `FAIL_FAST` | A resource failed, and nothing was committed. | Fix the failure, or use `BEST_EFFORT`. |
+| A `planning` issue naming a cycle | A dependency cycle. | Break the cycle in the source data. |
+| `not run because dependency ... failed` | An upstream operation failed. | Fix the upstream resource; dependents retry automatically. |
+| `SKIPPED` | `SKIP_IF_RUNNING` while another refresh ran. | Expected; choose another overlap policy if needed. |
+| `CANCELLED` | Superseded under `CANCEL_PREVIOUS`, or `close(cancel=True)`. | Expected. |
+| `EngineClosedError` | A request after `close()`. | Keep the engine open for the application's lifetime. |
+| `RuntimeError`: the refresh would wait for itself | A source, operation, fingerprint strategy, or state store awaited `refresh()` or `submit()` of its own engine. | Start the follow-up refresh in a separate task, or request it after the refresh returns. |
+| A refresh, `close()`, or `stop()` never finishes | Code that the refresh or scheduled run waits for waits for it in turn, for example through `asyncio.gather` or by awaiting `stop()` from an operation. | Shut down from such code with `close(wait=False)` or `stop(wait=False)`, and never await follow-up refreshes there. |
+| `ConfigurationError` | Inconsistent arguments, such as `resource_ids` with a mode other than `TARGETED`. | Fix the call; the message names the argument. |
+| `TypeError` when creating the engine | The source, operation, or store does not implement its contract. | Implement the methods with the documented signatures, or subclass the ABCs. |
 
-## A resource that should be unchanged keeps re-running
+## Responsiveness
 
-- **Cause 1:** `cheap_indicator_reliable=True` but the indicator value is not
-  actually stable/monotonic for an unchanged resource (e.g. a `last_modified`
-  header that changes on read).
-- **Cause 2:** dependency set changed even though content didn't
-  (`ChangeType.DEPENDENCY_CHANGED` still selects the resource in
-  `INCREMENTAL`/`DEPENDENCY_AWARE` mode).
-- **Solution:** verify the cheap indicator's actual guarantees with the
-  source system; if dependencies legitimately changed, that re-run is
-  correct behavior, not a bug.
-
-## Scheduled refresh appears to block the application
-
-- **Cause:** calling `await engine.refresh()` directly on a blocking timer
-  (e.g. `time.sleep` in a loop) instead of using `AsyncScheduler` or an
-  external scheduler.
-- **Solution:** use `AsyncScheduler(callback, interval=...)` or
-  `ExternalSchedulerAdapter` — see [scheduling.md](scheduling.md). Confirm
-  `await scheduler.start()` returns immediately in your logs/tracing.
-
-## `SchedulerError: scheduler is already started`
-
-- **Cause:** calling `scheduler.start()` twice without an intervening
-  `stop()`.
-- **Solution:** guard start calls with your own state tracking, or call
-  `stop()` before a second `start()`.
-
-## Concurrent refresh requests seem to "disappear" or return unexpected results
-
-- **Cause:** default `OverlapPolicy.COALESCE` merges concurrent requests into
-  one run and returns the same `RefreshResult` to every caller.
-- **Diagnosis:** check `RefreshConfig.overlap_policy`; log `RefreshRequest`
-  identity/`correlation_id` to see merges happening.
-- **Solution:** choose `QUEUE` if every request must run to completion
-  independently, or `SKIP_IF_RUNNING`/`CANCEL_PREVIOUS` per your freshness vs.
-  throughput trade-off. See [scheduling.md](scheduling.md).
-
-## State is lost after a restart
-
-- **Cause:** using the default `InMemoryStateStore` (process-local, in
-  memory) in a context that requires durability across restarts.
-- **Solution:** inject a durable `StateStore` (SQLite/PostgreSQL/etc.) — see
-  [state-management.md](state-management.md); the package intentionally does
-  not ship one.
-
-## An operation runs twice for the same resource
-
-- **Cause:** a timeout or retry re-invoked `RefreshOperation` after the
-  external side effect had already completed but before the engine observed
-  success.
-- **Solution:** operations must be idempotent; use destination-side
-  idempotency keys when available. This is expected engine behavior, not a
-  bug — see [state-management.md](state-management.md).
-
----
-
-## Architectural anti-patterns (verified against actual design)
-
-1. **Reimplementing change detection manually** instead of using
-   `FingerprintStrategy` + `ChangeDetector` — duplicates logic the package
-   already provides and loses its determinism guarantees.
-2. **Blocking the caller for scheduled refresh** — always use
-   `AsyncScheduler`/`ExternalSchedulerAdapter`.
-3. **Defaulting to `RefreshMode.FULL`** when `INCREMENTAL`/`DEPENDENCY_AWARE`
-   is appropriate — wastes work at scale.
-4. **Persisting a new fingerprint/state before the operation succeeds** —
-   the engine already prevents this; do not add your own eager writes that
-   bypass the transaction the engine gives you.
-5. **Spawning unbounded concurrent refresh tasks** instead of using
-   `RefreshConfig.max_concurrency`.
-6. **Coupling `refresh_engine` types to a specific domain/framework** (MCP,
-   agents, a particular web framework) anywhere outside a single adapter
-   layer (Pattern E in [integration.md](integration.md)).
-7. **Inventing APIs not present in `refresh_engine.__all__`** — always verify
-   against the installed package
-   (`python -c "import refresh_engine; print(sorted(refresh_engine.__all__))"`)
-   or the published
-   [API reference](https://refresh-engine.readthedocs.io/en/latest/api/)
-   before use.
-
-## Also avoid over-engineering
-
-Do not add a custom event bus, database, queue, or additional background
-worker pool "just in case" when `EventPublisher`, `StateStore`, and
-`RefreshConfig.max_concurrency` already solve the requirement — see
-[architecture.md](architecture.md) for what the engine already owns.
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| The application stalls during refreshes. | Blocking I/O in the source, operation, store, or a synchronous event handler. | Use async clients or `asyncio.to_thread`, and keep handlers fast. |
+| Scheduled refreshes run late or are skipped. | Refreshes take longer than the interval, so slots are skipped by design. | Increase the interval, or reduce the work per refresh. |
+| `run_threadsafe()` raises `RuntimeError`. | It was called on the event loop's thread. | Use `await adapter.run()` on the loop. |
+| No logs appear. | No `StructlogEventHandler` is subscribed, the engine uses another publisher, or structlog filters the level. | Subscribe the handler to the publisher passed to the engine, and check the structlog configuration. |

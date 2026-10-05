@@ -1,0 +1,45 @@
+flowchart TB
+    subgraph discovered["Each discovered resource"]
+        direction TB
+        resource["Discovered resource"]
+        cheap{"Reliable cheap indicator<br/>equal to the stored one?"}
+        reuse["Reuse the stored<br/>fingerprint"]
+        snapshot["Read the snapshot and<br/>compute its fingerprint"]
+        stored{"Stored state?"}
+        fingerprint{"Fingerprint<br/>equal?"}
+        dependencies{"Dependencies<br/>equal?"}
+        added(["ADDED"])
+        modified(["MODIFIED"])
+        dependency(["DEPENDENCY_CHANGED"])
+        unchanged(["UNCHANGED"])
+
+        resource --> cheap
+        cheap -- yes --> reuse --> dependencies
+        cheap -- no --> snapshot --> stored
+        stored -- no --> added
+        stored -- yes --> fingerprint
+        fingerprint -- no --> modified
+        fingerprint -- yes --> dependencies
+        dependencies -- no --> dependency
+        dependencies -- yes --> unchanged
+    end
+
+    subgraph missing["Each stored resource missing from discovery"]
+        direction TB
+        absent["Stored resource"]
+        complete{"Discovery<br/>complete?"}
+        deleted(["DELETED"])
+        kept(["Kept; warning reported"])
+        absent --> complete
+        complete -- yes --> deleted
+        complete -- no --> kept
+    end
+
+    classDef outcome fill:#e8eaf6,stroke:#3949ab,color:#1a237e
+    classDef question fill:#fff8e1,stroke:#f9a825,color:#4e342e
+    classDef step fill:#ffffff,stroke:#5c6bc0,color:#1a237e
+    class added,modified,dependency,unchanged,deleted,kept outcome
+    class cheap,stored,fingerprint,dependencies,complete question
+    class resource,reuse,snapshot,absent step
+    style discovered fill:none,stroke:#7986cb,stroke-dasharray:6 4,color:#7986cb
+    style missing fill:none,stroke:#7986cb,stroke-dasharray:6 4,color:#7986cb

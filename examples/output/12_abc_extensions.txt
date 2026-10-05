@@ -1,0 +1,2 @@
+cache:     {'dark-mode': True, 'new-checkout': True}
+refreshed: 1, committed changes: 3

@@ -1,0 +1,291 @@
+{
+  "environment": {
+    "refresh_engine": "0.2.0",
+    "python": "3.12.14",
+    "implementation": "CPython",
+    "platform": "Windows-11-10.0.26100-SP0",
+    "machine": "AMD64",
+    "date": "2026-10-05"
+  },
+  "results": [
+    {
+      "size": 1000,
+      "profile": "unchanged",
+      "repeat": 3,
+      "seconds_median": 0.002598200022475794,
+      "seconds_samples": [
+        0.002598200022475794,
+        0.002597900020191446,
+        0.0026575999800115824
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 1000,
+      "discovery_seconds": 0.0012285000120755285,
+      "snapshot_seconds": 0.0007876000017859042,
+      "peak_memory_bytes": 363059
+    },
+    {
+      "size": 1000,
+      "profile": "one",
+      "repeat": 3,
+      "seconds_median": 0.002658999990671873,
+      "seconds_samples": [
+        0.002533199993195012,
+        0.002658999990671873,
+        0.0027362999971956015
+      ],
+      "status": "success",
+      "refreshed": 1,
+      "unchanged": 999,
+      "discovery_seconds": 0.0011872000177390873,
+      "snapshot_seconds": 0.0007967999845277518,
+      "execution_seconds": 3.9700011257082224e-05,
+      "persistence_seconds": 5.089998012408614e-05,
+      "peak_memory_bytes": 379788
+    },
+    {
+      "size": 1000,
+      "profile": "hundred",
+      "repeat": 3,
+      "seconds_median": 0.004281600005924702,
+      "seconds_samples": [
+        0.003918000002158806,
+        0.004651700000977144,
+        0.004281600005924702
+      ],
+      "status": "success",
+      "refreshed": 100,
+      "unchanged": 900,
+      "discovery_seconds": 0.0012454999960027635,
+      "snapshot_seconds": 0.0013507999829016626,
+      "execution_seconds": 0.0008646999776829034,
+      "persistence_seconds": 7.069998537190259e-05,
+      "peak_memory_bytes": 464471
+    },
+    {
+      "size": 1000,
+      "profile": "thousand",
+      "repeat": 3,
+      "seconds_median": 0.016341100010322407,
+      "seconds_samples": [
+        0.018306300014955923,
+        0.016341100010322407,
+        0.01573779998579994
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 0,
+      "discovery_seconds": 0.0011693999986164272,
+      "snapshot_seconds": 0.0049119000032078475,
+      "execution_seconds": 0.008096800011117011,
+      "persistence_seconds": 0.00021959998412057757,
+      "peak_memory_bytes": 1233535
+    },
+    {
+      "size": 1000,
+      "profile": "full",
+      "repeat": 3,
+      "seconds_median": 0.015562899992801249,
+      "seconds_samples": [
+        0.015562899992801249,
+        0.01658490000409074,
+        0.015534100006334484
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 1000,
+      "discovery_seconds": 0.0011523999855853617,
+      "snapshot_seconds": 0.004967099986970425,
+      "execution_seconds": 0.007231299998238683,
+      "persistence_seconds": 0.00022529999841935933,
+      "peak_memory_bytes": 1170783
+    },
+    {
+      "size": 10000,
+      "profile": "unchanged",
+      "repeat": 3,
+      "seconds_median": 0.027288800018141046,
+      "seconds_samples": [
+        0.028405999997630715,
+        0.027288800018141046,
+        0.02643760002683848
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 10000,
+      "discovery_seconds": 0.013016099983360618,
+      "snapshot_seconds": 0.010086300026159734,
+      "peak_memory_bytes": 3665763
+    },
+    {
+      "size": 10000,
+      "profile": "one",
+      "repeat": 3,
+      "seconds_median": 0.028468600008636713,
+      "seconds_samples": [
+        0.028147200006060302,
+        0.028468600008636713,
+        0.03275429998757318
+      ],
+      "status": "success",
+      "refreshed": 1,
+      "unchanged": 9999,
+      "discovery_seconds": 0.013719200011109933,
+      "snapshot_seconds": 0.009866399981547147,
+      "execution_seconds": 5.439997767098248e-05,
+      "persistence_seconds": 0.0005571999936364591,
+      "peak_memory_bytes": 3666468
+    },
+    {
+      "size": 10000,
+      "profile": "hundred",
+      "repeat": 3,
+      "seconds_median": 0.034135199995944276,
+      "seconds_samples": [
+        0.034135199995944276,
+        0.042587900010403246,
+        0.03234190001967363
+      ],
+      "status": "success",
+      "refreshed": 100,
+      "unchanged": 9900,
+      "discovery_seconds": 0.015491999976802617,
+      "snapshot_seconds": 0.011366399994585663,
+      "execution_seconds": 0.001059800008079037,
+      "persistence_seconds": 0.0007043000077828765,
+      "peak_memory_bytes": 3722479
+    },
+    {
+      "size": 10000,
+      "profile": "thousand",
+      "repeat": 3,
+      "seconds_median": 0.06940900001791306,
+      "seconds_samples": [
+        0.06940900001791306,
+        0.06128680001711473,
+        0.0867339999822434
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 9000,
+      "discovery_seconds": 0.023642299987841398,
+      "snapshot_seconds": 0.02051259999279864,
+      "execution_seconds": 0.016858399991178885,
+      "persistence_seconds": 0.0016583999968133867,
+      "peak_memory_bytes": 4326299
+    },
+    {
+      "size": 10000,
+      "profile": "full",
+      "repeat": 3,
+      "seconds_median": 0.31540260001202114,
+      "seconds_samples": [
+        0.40618319998611696,
+        0.31540260001202114,
+        0.30430669998168014
+      ],
+      "status": "success",
+      "refreshed": 10000,
+      "unchanged": 10000,
+      "discovery_seconds": 0.01872289998573251,
+      "snapshot_seconds": 0.11617630001273938,
+      "execution_seconds": 0.1507211999851279,
+      "persistence_seconds": 0.00660500000230968,
+      "peak_memory_bytes": 11047815
+    },
+    {
+      "size": 100000,
+      "profile": "unchanged",
+      "repeat": 3,
+      "seconds_median": 0.554972199985059,
+      "seconds_samples": [
+        0.47332140000071377,
+        0.5854424000135623,
+        0.554972199985059
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 100000,
+      "discovery_seconds": 0.22295450000092387,
+      "snapshot_seconds": 0.2293350999825634,
+      "peak_memory_bytes": 39180019
+    },
+    {
+      "size": 100000,
+      "profile": "one",
+      "repeat": 3,
+      "seconds_median": 0.4976507999817841,
+      "seconds_samples": [
+        0.5885948000068311,
+        0.448999799991725,
+        0.4976507999817841
+      ],
+      "status": "success",
+      "refreshed": 1,
+      "unchanged": 99999,
+      "discovery_seconds": 0.18528959999093786,
+      "snapshot_seconds": 0.23526349998428486,
+      "execution_seconds": 0.00012049998622387648,
+      "persistence_seconds": 0.012250499974470586,
+      "peak_memory_bytes": 41555620
+    },
+    {
+      "size": 100000,
+      "profile": "hundred",
+      "repeat": 3,
+      "seconds_median": 0.50386029999936,
+      "seconds_samples": [
+        0.5661151999956928,
+        0.44829490000847727,
+        0.50386029999936
+      ],
+      "status": "success",
+      "refreshed": 100,
+      "unchanged": 99900,
+      "discovery_seconds": 0.1907917000062298,
+      "snapshot_seconds": 0.21190970001043752,
+      "execution_seconds": 0.0020201000152155757,
+      "persistence_seconds": 0.014501500001642853,
+      "peak_memory_bytes": 41642727
+    },
+    {
+      "size": 100000,
+      "profile": "thousand",
+      "repeat": 3,
+      "seconds_median": 0.4884197000064887,
+      "seconds_samples": [
+        0.4751850999891758,
+        0.6590204999956768,
+        0.4884197000064887
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 99000,
+      "discovery_seconds": 0.16541409998899326,
+      "snapshot_seconds": 0.2182302999717649,
+      "execution_seconds": 0.009206399990944192,
+      "persistence_seconds": 0.028284200001507998,
+      "peak_memory_bytes": 42349051
+    },
+    {
+      "size": 100000,
+      "profile": "full",
+      "repeat": 3,
+      "seconds_median": 3.1411213999963365,
+      "seconds_samples": [
+        3.1120469000015873,
+        4.063627600000473,
+        3.1411213999963365
+      ],
+      "status": "success",
+      "refreshed": 100000,
+      "unchanged": 100000,
+      "discovery_seconds": 0.18777769998996519,
+      "snapshot_seconds": 1.2145579000061844,
+      "execution_seconds": 1.1667690000031143,
+      "persistence_seconds": 0.08270689999335445,
+      "peak_memory_bytes": 119783767
+    }
+  ]
+}

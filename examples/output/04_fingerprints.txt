@@ -1,0 +1,4 @@
+reliable indicator: reads=0, unchanged=2
+content hash:       reads=1, modified=1
+custom strategy:    modified=0, unchanged=2
+                    after an edit: modified=1

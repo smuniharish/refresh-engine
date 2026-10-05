@@ -1,164 +1,215 @@
 ---
 name: refresh-engine
-description: Integrate, configure, debug, test, or extend the refresh-engine Python package for discovering resources, detecting what changed, and safely executing application-defined refresh operations — including incremental refresh, fingerprint/hash-based change detection, dependency-aware refresh, asyncio scheduling, bounded concurrency, and transactional state. Use when a resource population must be kept in sync without reprocessing everything or coupling this infrastructure to a specific domain (MCP, agents, files, etc.).
+description: Integrate, configure, test, and troubleshoot refresh-engine, the asyncio Python library (imported as refresh_engine) that keeps derived data such as search indexes, caches, embeddings, configuration, and registries in sync with a source by refreshing only the resources that were added, modified, deleted, or affected by a dependency change. Use when writing a resource source or refresh operation; choosing refresh modes, fingerprints, or cheap change indicators; declaring dependencies between resources; implementing a durable state store; scheduling periodic or event-driven refreshes; configuring retries, timeouts, failure policies, or overlap policies; adding structured logging or metrics; or debugging why resources were or were not refreshed or deleted.
+license: Apache-2.0
+metadata:
+  author: S. Muni Harish
+  version: "0.2.0"
+  documentation: https://refresh-engine.readthedocs.io
 ---
 
 # refresh-engine
 
-Use this skill for the existing `refresh_engine` Python package (PyPI:
-`refresh-engine`), not to design a new hashing framework, scheduler,
-dependency resolver, or state store when this package already provides one.
+refresh-engine keeps a destination in sync with a collection of source resources.
+The application supplies two small pieces:
 
-refresh-engine's public API is imported directly from the top-level package:
+- a **source** that lists resources (`discover`) and reads one resource
+  (`snapshot`);
+- an **operation** that applies one change to the destination.
 
+The engine does the rest. It fingerprints snapshots and compares them with the
+state of the previous refresh. It plans refreshes and deletions in dependency
+order and runs them with bounded concurrency, retries, and timeouts. Finally it
+commits the new state of every resource that succeeded.
+
+## When to use it
+
+Use refresh-engine when:
+
+- a collection of resources must be mirrored, indexed, or transformed, and only a
+  small part of it changes between runs;
+- changes must propagate to resources that depend on the changed ones;
+- refreshes must run periodically or on demand without blocking the application;
+- existing code diffs, hashes, orders, or schedules this work by hand.
+
+Do not use it to re-fetch a single value, for request caching with expiry times,
+or as a general-purpose job scheduler.
+
+## Workflow
+
+1. **Check the version.** This skill describes refresh-engine 0.2, which requires
+   Python 3.12 or newer. Run
+   `python -c "import refresh_engine; print(refresh_engine.__version__)"`, or
+   install it with `pip install refresh-engine`. Projects on 0.1 must follow the
+   upgrade notes in the
+   [changelog](https://refresh-engine.readthedocs.io/en/latest/changelog/) first.
+2. **Model the resources.** Give each resource a stable, unique string ID. Decide
+   what discovery can list cheaply, such as IDs, tags, versions, or ETags, and what
+   a snapshot must read, such as the content.
+3. **Implement the source and the operation**:
+   [references/sources-and-operations.md](references/sources-and-operations.md).
+4. **Choose change detection**, the fingerprint strategy and an optional cheap
+   indicator: [references/change-detection.md](references/change-detection.md).
+5. **Declare dependencies** when a resource's output depends on other resources:
+   [references/dependencies.md](references/dependencies.md).
+6. **Choose a state store.** Production integrations need a durable one:
+   [references/state-stores.md](references/state-stores.md).
+7. **Configure failures and triggers**: retries, timeouts, policies, modes, and
+   scheduling, in [references/failure-handling.md](references/failure-handling.md),
+   [references/refresh-modes.md](references/refresh-modes.md), and
+   [references/scheduling.md](references/scheduling.md).
+8. **Add logging and metrics**:
+   [references/observability.md](references/observability.md).
+9. **Test** the integration with in-memory fakes:
+   [references/testing.md](references/testing.md).
+
+Start new integrations from [assets/integration_template.py](assets/integration_template.py).
+When something behaves unexpectedly, use
+[references/troubleshooting.md](references/troubleshooting.md).
+
+## Rules
+
+Each rule prevents lost data, missed changes, or refreshes that never converge.
+
+1. **Raise when discovery fails.** Never return an empty or partial listing as
+   complete, because a complete discovery that omits a resource deletes it. Return
+   `DiscoveryResult(..., complete=False)` when the listing may be partial.
+2. **Raise when an operation fails.** Do not catch and log errors inside the
+   operation. A raised exception keeps the resource's previous state, so the next
+   refresh retries it.
+3. **Make operations idempotent**, and never suppress `asyncio.CancelledError`. An
+   operation may run again after a retry, a timeout, or a restart.
+4. **Handle deletions.** For `PlanAction.DELETE`, `snapshot` is `None` and
+   `resource` carries only the ID.
+5. **Fingerprint everything the operation uses, and nothing volatile.** Clocks,
+   random values, and counters that change without a real change cause needless
+   refreshes.
+6. **Mark a cheap indicator reliable only if it changes whenever the fingerprinted
+   data changes.** Otherwise the change is missed.
+7. **Persist state durably in production**, with atomic commits, and run one
+   engine per set of stored states.
+8. **Check results.** Operational failures are reported in `RefreshResult.status`
+   and `RefreshResult.errors`; they are not raised.
+9. **Close engines and schedulers**, preferably with `async with`.
+10. **Never wait for the engine from its own refresh.** A source, operation, or state
+    store that awaits `refresh()` of its own engine gets `RuntimeError`, and waits
+    routed through another task never finish. Start follow-up refreshes in a
+    separate task that the refresh does not wait for, and shut down from such code
+    with `close(wait=False)` or `stop(wait=False)`.
+11. **Keep the event loop free.** Run blocking I/O with `asyncio.to_thread`.
+12. **Import only from `refresh_engine`.** Every public name is exported there.
+
+## Minimal integration
+
+<!-- test -->
 ```python
-from refresh_engine import RefreshEngine, ...
+import asyncio
+
+from refresh_engine import (
+    DiscoveryResult,
+    PlanAction,
+    RefreshEngine,
+    RefreshRequest,
+    Resource,
+    ResourceSnapshot,
+)
+
+SOURCE = {"a": "alpha", "b": "beta"}
+DESTINATION: dict[str, str] = {}
+
+
+class Source:
+    async def discover(self) -> DiscoveryResult:
+        return DiscoveryResult([Resource(key) for key in sorted(SOURCE)])
+
+    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
+        return ResourceSnapshot(
+            resource.resource_id, content=SOURCE[resource.resource_id]
+        )
+
+
+async def apply(
+    resource: Resource,
+    snapshot: ResourceSnapshot | None,
+    action: PlanAction,
+    request: RefreshRequest,
+    /,
+) -> None:
+    if action is PlanAction.DELETE:
+        DESTINATION.pop(resource.resource_id, None)
+    elif snapshot is not None:
+        DESTINATION[resource.resource_id] = snapshot.content.upper()
+
+
+async def main() -> None:
+    async with RefreshEngine(Source(), apply) as engine:
+        await engine.refresh()
+        SOURCE["a"] = "alpha 2"
+        del SOURCE["b"]
+        result = await engine.refresh()
+        print(result.status, result.modified_count, result.deleted_count, DESTINATION)
+
+
+asyncio.run(main())
 ```
 
-It is **domain-agnostic refresh infrastructure**: it discovers resources,
-fingerprints and diffs them against previous state, plans dependency-aware
-work, and executes an **application-supplied** `RefreshOperation` safely under
-bounded concurrency, retries, and transactional state commits. It has no
-concept of MCP, agents, skills, files, or any other resource domain — the
-consuming application supplies that meaning through exactly two contracts,
-`ResourceSource` and `RefreshOperation`. Everything else (fingerprinting,
-change detection, dependency impact, planning, execution, state, scheduling)
-is reusable infrastructure that should not be duplicated or domain-coupled.
+```text
+success 1 1 {'a': 'ALPHA 2'}
+```
 
-Read [`references/architecture.md`](references/architecture.md) before
-reasoning about internal behavior. Read
-[`references/integration.md`](references/integration.md) before adding it to
-an application.
+## API quick reference
 
-## Activate when
+| API | Purpose |
+| --- | --- |
+| `RefreshEngine(source, operation, *, fingerprint=None, store=None, config=None, events=None)` | The engine; defaults to `CompositeHash`, `InMemoryStateStore`, `RefreshConfig()`, and a new `EventPublisher`. |
+| `await engine.refresh(*, mode=None, resource_ids=(), selector=None, trigger=TriggerSource.MANUAL, metadata=None, correlation_id=None)` | Run a refresh and return a `RefreshResult`. The mode defaults to `TARGETED` when IDs or a selector are given, otherwise `INCREMENTAL`. |
+| `await engine.submit(request)` | Run a prepared `RefreshRequest`. |
+| `await engine.close(cancel=False, wait=True)` | Stop accepting requests, then wait for or cancel the accepted ones; `wait=False` returns at once. |
+| `Resource(resource_id, *, metadata, version, dependencies, cheap_indicator, cheap_indicator_reliable)` | One discovered resource. |
+| `ResourceSnapshot(resource_id, *, content, metadata, version, version_token, etag, dependencies)` | The observable state of one resource. |
+| `DiscoveryResult(resources, *, complete=True, diagnostics=())` | The result of `discover()`; `resources` may be sync or async iterable. |
+| `RefreshConfig(*, max_concurrency=10, overlap_policy, failure_policy, retry, timeout)` | Engine settings. |
+| `RetryConfig(*, max_attempts=1, initial_delay=0.1, max_delay=5.0, exponential_base=2.0, jitter=0.0, retryable_exceptions=(Exception,))` | Operation retries. |
+| `TimeoutConfig(*, discovery=None, snapshot=None, operation=None, overall=None)` | Timeouts in seconds. |
+| `CompositeHash`, `ContentHash`, `MetadataHash`, `VersionTokenFingerprint`, `ETagFingerprint`, `canonical_digest` | Fingerprinting. |
+| `IDSelector`, `TagSelector(tags, *, match_all=True, key="tags")`, `PredicateSelector` | Targeting; combine with `&`, `\|`, and `~`. |
+| `InMemoryStateStore`, `StateStoreABC`, `StateTransactionABC` | State persistence. |
+| `AsyncScheduler(callback, interval, *, events=None, run_immediately=False)`, `ExternalSchedulerAdapter(submit, *, loop=None)` | Scheduling. |
+| `EventPublisher`, `StructlogEventHandler`, `MetricsEventHandler`, `InMemoryMetrics`, `default_redactor` | Observability. |
 
-Use refresh-engine when an application must keep a destination in sync with a
-changing collection of external resources (configs, documents, registry
-entries, catalog items, plugin manifests, cache entries, etc.) without
-reprocessing every resource on every refresh, and without hand-rolling
-change-detection, dependency ordering, or scheduling.
+Enumerations: `RefreshMode` (`INCREMENTAL`, `FULL`, `TARGETED`, `DEPENDENCY_AWARE`),
+`RefreshStatus` (`SUCCESS`, `PARTIAL`, `FAILED`, `CANCELLED`, `SKIPPED`),
+`FailurePolicy` (`BEST_EFFORT`, `FAIL_FAST`), `OverlapPolicy` (`COALESCE`, `QUEUE`,
+`SKIP_IF_RUNNING`, `CANCEL_PREVIOUS`), `PlanAction` (`REFRESH`, `DELETE`),
+`TriggerSource` (`MANUAL`, `SCHEDULED`, `EVENT`, `QUERY`, `EXTERNAL`), and
+`RefreshPhase`.
 
-Typical indicators:
+`RefreshResult` reports `status`, `discovered_count`, `added_count`,
+`modified_count`, `dependency_changed_count`, `unchanged_count`, `deleted_count`,
+`impacted_count`, `refreshed_count`, `skipped_count`, `failed_count`, `errors`,
+`warnings`, `executions`, `duration`, and the `request` that ran.
 
-- a resource population is large and only a small fraction typically changes
-  between refreshes;
-- a change in one resource must propagate to resources that depend on it;
-- refresh must run periodically without blocking the application's main
-  execution path;
-- a previous attempt manually diffs/hashes resources or reimplements
-  scheduling instead of using an existing library;
-- an existing `RefreshEngine` integration needs configuration, debugging, or
-  tests.
+`refresh()` and `submit()` raise only for programming errors: `ConfigurationError`
+(also a `ValueError`) for inconsistent arguments, `TypeError` for an object that is
+not a `RefreshRequest`, `EngineClosedError` after `close()`, and `RuntimeError` when
+awaited directly by the engine's own source, operation, fingerprint strategy, or
+state store. Cancelling the task that awaits them raises `asyncio.CancelledError` as
+usual. Constructors raise `ConfigurationError` for invalid values and `TypeError`
+for objects that do not implement a contract.
 
-Do not select it merely because an application has one resource with no
-independent change signal (just re-fetch and overwrite), needs pure
-request/response TTL caching (use a cache library instead), or wants a
-general-purpose task scheduler unrelated to resource refresh.
+## References
 
-## Required workflow
+| Reference | Read it when |
+| --- | --- |
+| [sources-and-operations.md](references/sources-and-operations.md) | Writing or reviewing a source or an operation. |
+| [refresh-modes.md](references/refresh-modes.md) | Choosing a mode, targeting resources, or building requests. |
+| [change-detection.md](references/change-detection.md) | Choosing or writing a fingerprint strategy, or adding cheap indicators. |
+| [dependencies.md](references/dependencies.md) | Resources depend on other resources. |
+| [failure-handling.md](references/failure-handling.md) | Configuring retries, timeouts, or failure policies, or reading results. |
+| [state-stores.md](references/state-stores.md) | Persisting state in a database. |
+| [scheduling.md](references/scheduling.md) | Running refreshes periodically, from other threads, or concurrently, and shutting down. |
+| [observability.md](references/observability.md) | Adding events, logging, or metrics. |
+| [testing.md](references/testing.md) | Testing an integration. |
+| [troubleshooting.md](references/troubleshooting.md) | Diagnosing unexpected refreshes, deletions, statuses, or errors. |
 
-### Before changing an application
-
-1. Inspect the installed/current refresh-engine version and the project's
-   existing `RefreshEngine` construction, if any. In this repository,
-   [`pyproject.toml`](https://github.com/smuniharish/refresh-engine/blob/main/pyproject.toml)
-   (`version = "0.1.0"`, `requires-python = ">=3.12,<3.13"`) and
-   [`src/refresh_engine/__init__.py`](https://github.com/smuniharish/refresh-engine/blob/main/src/refresh_engine/__init__.py)
-   are the version/export sources; verify `refresh_engine.__all__` against the
-   installed package rather than assuming a symbol exists.
-2. Identify resource identity (`resource_id`) and where discovery and reads
-   come from — this becomes the application's `ResourceSource`.
-3. Decide whether a cheap, reliable change signal exists (an ETag or version
-   token from the source system) for `Resource.cheap_indicator` /
-   `cheap_indicator_reliable` — only mark it reliable when equality *proves*
-   the content cannot have changed.
-4. Start from the repository example that matches the workload; see
-   [`references/integration.md`](references/integration.md) and the
-   [example collection](https://github.com/smuniharish/refresh-engine/tree/main/examples).
-5. Use the documented public contracts and configuration only
-   (`RefreshEngine`, `RefreshConfig`, `ResourceSource`/`RefreshOperation`,
-   `FingerprintStrategy`, `StateStore`, `AsyncScheduler`). The package has no
-   CLI and no plugin registry.
-
-### Choose the right response to a refresh requirement
-
-1. **Re-run every resource's operation every time, regardless of change:**
-   `RefreshMode.FULL`.
-2. **Only resources changed since the last successful refresh (the common
-   case, and the default):** `RefreshMode.INCREMENTAL` — see
-   [`references/incremental-refresh.md`](references/incremental-refresh.md).
-3. **A specific, caller-known set of resource IDs:** `RefreshMode.TARGETED`
-   with `resource_ids` set.
-4. **Changes must propagate to resources that depend on them:**
-   `RefreshMode.DEPENDENCY_AWARE` — see
-   [`references/dependency-refresh.md`](references/dependency-refresh.md).
-5. **Refresh must not block the caller and must run periodically:** use
-   `AsyncScheduler` (in-process, same event loop) or an external scheduler
-   plus `ExternalSchedulerAdapter` — never a manual thread/`while True` loop.
-   See [`references/scheduling.md`](references/scheduling.md).
-6. **Discovery or a resource operation failed:** never infer that resources
-   were deleted from a `DiscoveryError` or a `complete=False` discovery, and
-   never advance a resource's persisted state past a failed operation. See
-   [`references/state-management.md`](references/state-management.md).
-7. **Choosing or writing a fingerprint strategy:** the default
-   `CompositeHash` covers common content shapes; write a custom
-   `FingerprintStrategy` only for content it cannot canonicalize. See
-   [`references/fingerprinting.md`](references/fingerprinting.md).
-
-## Integration rules
-
-- Implement exactly two contracts per integration — `ResourceSource` and
-  `RefreshOperation` (structurally, via `Protocol`, or via `ResourceSourceABC`
-  / `RefreshOperationABC`) — and keep all domain-specific translation inside
-  them (Pattern E in
-  [`references/integration.md`](references/integration.md)). Do not let
-  `refresh_engine` types leak into unrelated application layers.
-- Bound concurrency through `RefreshConfig.max_concurrency`; never spawn
-  unbounded concurrent refresh tasks around the engine.
-- Persist state only through the engine's own transactional commit (after a
-  resource's operation succeeds) — never write your own parallel "last
-  refreshed" bookkeeping.
-- Make every `RefreshOperation` idempotent and cancellation-safe; a
-  `CancelledError` must not leave partially-applied, persisted state.
-- Configure `RefreshConfig.overlap_policy` deliberately
-  (`COALESCE`/`SKIP_IF_RUNNING`/`QUEUE`/`CANCEL_PREVIOUS`) instead of guarding
-  overlapping refreshes yourself.
-- Use `EventPublisher`/`StructlogEventHandler`/`MetricsSink` for observability
-  instead of ad hoc logging scattered through your integration.
-
-## Prohibited shortcuts
-
-Do **not**:
-
-- reimplement manual hashing/diffing instead of using a `FingerprintStrategy`
-  and the built-in `ChangeDetector`;
-- block the caller's main execution path for scheduled refresh instead of
-  using `AsyncScheduler` or `ExternalSchedulerAdapter`;
-- use `RefreshMode.FULL` "to be safe" when `INCREMENTAL` or
-  `DEPENDENCY_AWARE` is correct and far cheaper at scale;
-- persist a new fingerprint or state entry before the corresponding operation
-  succeeds, or persist state after `CancelledError`/an exception;
-- spawn unbounded concurrent tasks around the engine instead of using
-  `RefreshConfig.max_concurrency`;
-- treat a `DiscoveryError` or a `complete=False` discovery result as "every
-  existing resource was deleted";
-- couple `refresh_engine` types to a specific domain/framework (MCP, agents, a
-  particular web framework) anywhere outside a single adapter layer;
-- invent an import, configuration option, or API not present in
-  `refresh_engine.__all__` or the installed source.
-
-## Verification checklist
-
-For an application change, add or update a focused test that exercises the
-relevant refresh path — added/modified/deleted/unchanged resources,
-dependency-aware ordering, scheduler start/stop, bounded concurrency, or
-failure/cancellation handling — following the patterns in
-[`references/integration.md`](references/integration.md). Run the project's
-own format, lint, type, and test commands.
-
-For changes to this skill, follow
-[`../../validation/README.md`](../../validation/README.md). Consult the
-authoritative
-[refresh-engine documentation](https://refresh-engine.readthedocs.io) and
-[example collection](https://github.com/smuniharish/refresh-engine/tree/main/examples)
-rather than expanding this file into a second manual.
+The full documentation is at <https://refresh-engine.readthedocs.io>.

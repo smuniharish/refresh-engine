@@ -1,0 +1,3 @@
+async scheduler:    state=running
+after leaving:      state=stopped
+thread scheduler:   status=success, trigger=external

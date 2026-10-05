@@ -1,0 +1,15 @@
+flowchart LR
+    request(["<b>Request</b><br/>manual, scheduled,<br/>event, or external"])
+    discover["<b>Discover</b><br/>load state and<br/>list resources"]
+    detect["<b>Detect</b><br/>cheap check or snapshot<br/>and fingerprint"]
+    plan["<b>Plan</b><br/>select and order<br/>by dependency"]
+    execute["<b>Execute</b><br/>bounded, retried,<br/>failure-isolated"]
+    persist["<b>Persist</b><br/>commit successful<br/>state atomically"]
+    result(["<b>Result</b><br/>counts, issues,<br/>and events"])
+
+    request --> discover --> detect --> plan --> execute --> persist --> result
+
+    classDef terminal fill:#e8eaf6,stroke:#3949ab,color:#1a237e
+    classDef step fill:#ffffff,stroke:#5c6bc0,color:#1a237e
+    class request,result terminal
+    class discover,detect,plan,execute,persist step

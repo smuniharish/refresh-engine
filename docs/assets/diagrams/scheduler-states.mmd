@@ -1,0 +1,9 @@
+stateDiagram-v2
+    direction LR
+    [*] --> STOPPED
+    STOPPED --> RUNNING: start()
+    RUNNING --> PAUSED: pause()
+    PAUSED --> RUNNING: resume()
+    RUNNING --> STOPPING: stop()
+    PAUSED --> STOPPING: stop()
+    STOPPING --> STOPPED: active run finished or cancelled

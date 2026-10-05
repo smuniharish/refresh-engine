@@ -1,53 +1,38 @@
-# refresh-engine Agent Skills
+# refresh-engine Agent Skill
 
-This directory is the canonical Agent Skills distribution for refresh-engine.
-It contains procedural guidance for coding agents that need to integrate,
-configure, test, or debug the existing `refresh_engine` package.
+This directory distributes the [Agent Skill](https://agentskills.io) for
+refresh-engine. The skill teaches AI coding agents to integrate, configure, test,
+and troubleshoot the `refresh_engine` package. It contains instructions and a
+template only; it adds no runtime code.
 
-It is not a Python package and does not add runtime behavior.
+| Path | Contents |
+| --- | --- |
+| [`skills/refresh-engine/SKILL.md`](skills/refresh-engine/SKILL.md) | Workflow, rules, a verified minimal integration, and the API quick reference. |
+| [`skills/refresh-engine/references/`](skills/refresh-engine/references/) | Focused guides that agents read on demand. |
+| [`skills/refresh-engine/assets/`](skills/refresh-engine/assets/) | A runnable, typed integration template. |
+| [`validation/`](validation/README.md) | How the skill is validated. |
 
-| Component | Location | Purpose |
-| --- | --- | --- |
-| refresh-engine runtime | [`src/refresh_engine/`](https://github.com/smuniharish/refresh-engine/tree/main/src/refresh_engine) | The published Python package and its supported public API. |
-| refresh-engine Agent Skill | [`skills/refresh-engine/`](skills/refresh-engine/) | Canonical agent-oriented instructions and concise reference material. |
-| Skill validation | [`validation/`](validation/) | Validation procedure and realistic activation/task matrix. |
+The skill follows the [specification](https://agentskills.io/specification): its
+`name` matches its directory, and its frontmatter uses only standard fields. It
+works unchanged with Claude Code, Codex, Cursor, GitHub Copilot, and other
+compatible agents.
 
-## Agent Skills format
+## Installation
 
-The canonical skill follows the Agent Skills `SKILL.md` format documented at
-[agentskills.io/specification](https://agentskills.io/specification): a
-directory-scoped Markdown instruction file with required `name` and
-`description` YAML frontmatter. Its `name` matches its containing directory
-(`refresh-engine`), and only the specification's required frontmatter is used
-for portability.
+Install it with the [skills CLI](https://www.skills.sh/docs/cli):
 
-Compatible agents should load
-[`skills/refresh-engine/SKILL.md`](skills/refresh-engine/SKILL.md) when
-working on refresh-engine integrations, incremental/dependency-aware refresh,
-or background scheduling. The skill links to the repository's authoritative
-[documentation](https://refresh-engine.readthedocs.io) and
-[examples](https://github.com/smuniharish/refresh-engine/tree/main/examples)
-instead of maintaining a second copy of them.
+```bash
+npx skills add https://github.com/smuniharish/refresh-engine/tree/master/refresh-engine-skills/skills/refresh-engine
+```
 
-For current skills.sh, Claude Code, Codex, Cursor, and GitHub Copilot
-installation instructions, see
-[Agent Skills - refresh-engine](https://refresh-engine.readthedocs.io/en/latest/agent-skills/).
-This repository intentionally provides no Claude, Codex, or Copilot adapter
-because none is required to consume the canonical `SKILL.md`.
+Or copy the complete `skills/refresh-engine` directory into a skills directory of
+your agent. The
+[installation guide](https://refresh-engine.readthedocs.io/en/latest/agent-skills/)
+lists the directories each agent reads.
 
-## Maintaining the distribution
+## Maintenance
 
-When refresh-engine's public API, supported integrations, or documented
-behavior changes:
-
-1. Update the canonical skill and only the reference material affected by
-   that verified change.
-2. Link to the corresponding implementation, tests, examples, or
-   documentation; do not duplicate runtime logic.
-3. Run the process in [`validation/README.md`](validation/README.md).
-4. Do not add platform-specific copies of the skill text. Add thin metadata
-   only when a host's current official documentation demonstrates it is
-   required.
-
-The distribution is covered by the repository's license; see the
-[repository license](https://github.com/smuniharish/refresh-engine/blob/main/LICENSE).
+The skill is versioned with the package; `metadata.version` in `SKILL.md` matches
+the release it describes. When the public API or documented behavior changes,
+update the affected skill files in the same change and follow the
+[validation guide](validation/README.md).

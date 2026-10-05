@@ -1,46 +1,75 @@
-"""Shared domain-neutral fixtures for the runnable examples."""
+"""In-memory source and operation shared by the examples."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from refresh_engine import DiscoveryResult, PlanAction, Resource, ResourceSnapshot
+from refresh_engine import (
+    DiscoveryResult,
+    PlanAction,
+    RefreshRequest,
+    Resource,
+    ResourceSnapshot,
+)
 
 
-class MemorySource:
+class DictionarySource:
+    """Discover resources from a dictionary of contents.
+
+    Attributes:
+        contents: Resource content keyed by resource ID.
+        dependencies: IDs each resource depends on.
+        tags: Tags stored in each resource's metadata.
+        complete: Whether discovery reports itself as complete.
+    """
+
     def __init__(
         self,
-        values: Mapping[str, object],
+        contents: Mapping[str, object],
         *,
         dependencies: Mapping[str, set[str]] | None = None,
-        complete: bool = True,
+        tags: Mapping[str, list[str]] | None = None,
     ) -> None:
-        self.values = dict(values)
-        self.dependencies = dependencies or {}
-        self.complete = complete
+        self.contents = dict(contents)
+        self.dependencies = dict(dependencies or {})
+        self.tags = dict(tags or {})
+        self.complete = True
 
     async def discover(self) -> DiscoveryResult:
-        async def stream():
-            for resource_id in sorted(self.values):
-                yield Resource(
-                    resource_id,
-                    dependencies=frozenset(self.dependencies.get(resource_id, set())),
-                )
+        resources = [
+            Resource(
+                resource_id,
+                metadata={"tags": self.tags.get(resource_id, [])},
+                dependencies=self.dependencies.get(resource_id, set()),
+            )
+            for resource_id in sorted(self.contents)
+        ]
+        return DiscoveryResult(resources, complete=self.complete)
 
-        return DiscoveryResult(stream(), complete=self.complete)
-
-    async def snapshot(self, resource: Resource) -> ResourceSnapshot:
+    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
         return ResourceSnapshot(
-            resource.resource_id,
-            content=self.values[resource.resource_id],
-            dependencies=resource.dependencies,
+            resource.resource_id, content=self.contents[resource.resource_id]
         )
 
 
 class Recorder:
-    def __init__(self) -> None:
-        self.calls: list[tuple[PlanAction, str]] = []
+    """Record every operation in the order it ran."""
 
-    async def __call__(self, resource, snapshot, action, request) -> None:
-        assert resource is not None
-        self.calls.append((action, resource.resource_id))
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def __call__(
+        self,
+        resource: Resource,
+        snapshot: ResourceSnapshot | None,
+        action: PlanAction,
+        request: RefreshRequest,
+        /,
+    ) -> None:
+        self.calls.append(f"{action.value} {resource.resource_id}")
+
+    def take(self) -> str:
+        """Return the recorded calls as one line and clear them."""
+        calls = ", ".join(self.calls) or "none"
+        self.calls.clear()
+        return calls

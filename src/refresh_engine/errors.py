@@ -1,57 +1,85 @@
-"""Structured refresh-engine exceptions."""
+"""Exceptions raised or reported by refresh-engine.
+
+Every exception derives from [`RefreshError`][refresh_engine.RefreshError]. Failures
+that happen while a refresh runs are not raised to the caller; the engine records
+them as [`RefreshIssue`][refresh_engine.RefreshIssue] values whose
+`exception_type` names the exception class.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+__all__ = [
+    "ConfigurationError",
+    "DependencyCycleError",
+    "DiscoveryError",
+    "EngineClosedError",
+    "FingerprintError",
+    "RefreshError",
+    "SchedulerError",
+    "SnapshotError",
+    "StateStoreError",
+]
 
 
 class RefreshError(Exception):
-    """Base exception for refresh-engine failures."""
+    """Base class for every refresh-engine exception."""
 
 
-class ConfigurationError(RefreshError):
-    """Invalid configuration."""
+class ConfigurationError(RefreshError, ValueError):
+    """An argument, model field, or configuration value is invalid.
+
+    It also derives from `ValueError`, so existing `except ValueError` handlers
+    continue to work.
+    """
 
 
 class DiscoveryError(RefreshError):
-    """Resource discovery failed."""
+    """Resource discovery failed or produced invalid data.
+
+    Sources may raise it to signal that a discovery cannot be trusted. The engine
+    reports discovery failures in `RefreshResult.errors` and never interprets a
+    failed discovery as an empty one.
+    """
 
 
 class SnapshotError(RefreshError):
-    """Resource snapshotting failed."""
+    """A resource snapshot could not be read or violated the source contract."""
 
 
 class FingerprintError(RefreshError):
-    """Fingerprint creation failed."""
+    """A snapshot value cannot be fingerprinted deterministically."""
 
 
-class ChangeDetectionError(RefreshError):
-    """Change detection failed."""
+class DependencyCycleError(RefreshError):
+    """Resources planned for refresh depend on each other in a cycle.
 
+    Attributes:
+        cycle: Resource IDs along the cycle. The first and last IDs are equal.
+    """
 
-class DependencyError(RefreshError):
-    """Dependency graph operation failed."""
+    def __init__(self, cycle: Sequence[str]) -> None:
+        """Create the error for the given cycle.
 
+        Args:
+            cycle: Resource IDs along the cycle, starting and ending with the same ID.
+        """
+        self.cycle = tuple(cycle)
+        super().__init__("dependency cycle detected: " + " -> ".join(self.cycle))
 
-class DependencyCycleError(DependencyError):
-    """A dependency cycle prevents deterministic execution."""
-
-    def __init__(self, cycle: tuple[str, ...]) -> None:
-        self.cycle = cycle
-        super().__init__(f"dependency cycle detected: {' -> '.join(cycle)}")
-
-
-class PlanningError(RefreshError):
-    """Refresh planning failed."""
-
-
-class ExecutionError(RefreshError):
-    """Refresh execution failed."""
+    def __reduce__(self) -> tuple[type[DependencyCycleError], tuple[tuple[str, ...]]]:
+        """Support pickling by reconstructing the error from its cycle."""
+        return type(self), (self.cycle,)
 
 
 class StateStoreError(RefreshError):
-    """State persistence failed."""
+    """A state store failed to load or commit resource state."""
 
 
 class SchedulerError(RefreshError):
-    """Scheduler lifecycle operation failed."""
+    """A scheduler lifecycle method was called in an invalid state."""
 
 
-class CancellationError(RefreshError):
-    """A refresh was cancelled by policy."""
+class EngineClosedError(RefreshError):
+    """A refresh was submitted to an engine that is closing or closed."""

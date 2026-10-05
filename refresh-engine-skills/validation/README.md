@@ -1,75 +1,57 @@
-# refresh-engine Agent Skill validation
+# Validating the Agent Skill
 
-This directory documents the repeatable validation process for the canonical
-skill. It is intentionally not a second runtime test suite and does not
-provide a host-specific package.
+Validate the skill whenever it, the public API, or documented behavior changes.
+Continuous integration runs the automated checks on every pull request.
 
-The Agent Skills specification was checked at
-[agentskills.io/specification](https://agentskills.io/specification). It
-defines `name` and `description` as the required frontmatter. No official
-validator is specified there, so validation combines structural checks with
-source-backed content review.
+## Automated checks
 
-## Structural validation
+Run these from the repository root:
 
-For every change:
+```bash
+uvx --from skills-ref==0.1.1 agentskills validate refresh-engine-skills/skills/refresh-engine
+uv run python scripts/check_docs.py
+uv run ruff check refresh-engine-skills
+uv run pyrefly check
+```
 
-1. Confirm [`../skills/refresh-engine/SKILL.md`](../skills/refresh-engine/SKILL.md)
-   exists and starts with YAML frontmatter.
-2. Confirm `name` is exactly `refresh-engine` (the directory name), contains
-   only lowercase letters and hyphens, and is at most 64 characters.
-3. Confirm `description` is non-empty, at most 1024 characters, and states
-   both the capability and when to activate it.
-4. Confirm only `name` and `description` appear in frontmatter unless the
-   current specification and a demonstrated host requirement justify more.
-5. Resolve every relative Markdown target in the skill, its references, and
-   this directory; no target may point at a deleted file.
-6. Confirm the distribution contains one `skills/refresh-engine/` canonical
-   knowledge source and no Claude/Codex/Copilot duplicate.
-7. Search the distribution for stale package names (e.g. leftover
-   `refresh_engine_skill`/`refresh-engine-agent-skill-v2` naming from earlier
-   drafts), invented CLI commands, credentials, and unrelated projects.
+- `agentskills validate`, from the `skills-ref` package, is the reference validator
+  of the [Agent Skills specification](https://agentskills.io/specification). It
+  checks the frontmatter, the name, and the directory layout.
+- `scripts/check_docs.py` compiles every Python block, runs the blocks marked
+  `<!-- test -->` and compares their output, runs the template in `assets/`,
+  rejects imports of non-public names, and resolves every link.
+- `ruff` and `pyrefly` lint and type-check the template.
 
-## Source-accuracy review
+## Review checklist
 
-Review every code snippet and factual claim against its source:
+1. `SKILL.md` stays under 500 lines, and its `description` states what the skill
+   does and when to use it, in at most 1024 characters.
+2. `metadata.version` matches `refresh_engine.__version__`.
+3. Every reference is linked from `SKILL.md` and is reachable in one step.
+4. Every signature, default, and behavior matches its source of truth:
 
-| Claim area | Source of truth |
-| --- | --- |
-| Public import and package version | [`src/refresh_engine/__init__.py`](https://github.com/smuniharish/refresh-engine/blob/main/src/refresh_engine/__init__.py) |
-| Constructor signature and lifecycle | [`src/refresh_engine/api/engine.py`](https://github.com/smuniharish/refresh-engine/blob/main/src/refresh_engine/api/engine.py) |
-| Dependencies and supported Python floor | [`pyproject.toml`](https://github.com/smuniharish/refresh-engine/blob/main/pyproject.toml) |
-| Public API and configuration | [API reference - refresh-engine](https://refresh-engine.readthedocs.io/en/latest/api/) |
-| Architecture and lifecycle | [`docs/architecture/overview.md`](https://github.com/smuniharish/refresh-engine/blob/main/docs/architecture/overview.md), [`docs/architecture/lifecycle.md`](https://github.com/smuniharish/refresh-engine/blob/main/docs/architecture/lifecycle.md), [`docs/architecture/decisions.md`](https://github.com/smuniharish/refresh-engine/blob/main/docs/architecture/decisions.md) |
-| Refresh modes, fingerprinting, scheduling, state guides | [`docs/guides/`](https://github.com/smuniharish/refresh-engine/tree/main/docs/guides) |
-| Executable workflows | [`examples/`](https://github.com/smuniharish/refresh-engine/tree/main/examples) and [`tests/`](https://github.com/smuniharish/refresh-engine/tree/main/tests) |
+    | Claim | Source of truth |
+    | --- | --- |
+    | Public names | `refresh_engine.__all__` in `src/refresh_engine/__init__.py` |
+    | Signatures, defaults, and documented behavior | The docstrings in `src/refresh_engine/`, rendered in the [API reference](https://refresh-engine.readthedocs.io/en/latest/api/) |
+    | Refresh semantics | The [guides](https://refresh-engine.readthedocs.io/en/latest/guides/) and the tests in `tests/` |
+    | Runnable patterns | `examples/` and their expected output in `examples/output/` |
 
-If a behavior lacks an implementation, test, or authoritative document, omit
-it from the skill rather than infer an API.
+5. The skill describes only public behavior. It never mentions private modules,
+   unreleased features, or credentials.
 
-## Agent-task matrix
+## Activation scenarios
 
-The following matrix was reviewed against the canonical
-[`SKILL.md`](../skills/refresh-engine/SKILL.md), its references, the runtime
-implementation, and the linked examples/tests.
+Use these requests to check that an agent selects the skill and follows the right
+reference. Each answer must use the public API and avoid the listed mistake.
 
-| Task | Activates | Grounded route | Avoids |
-| --- | --- | --- | --- |
-| "I need to refresh a collection of resources periodically. How should I integrate refresh-engine?" | Yes | [`references/integration.md`](../skills/refresh-engine/references/integration.md) Pattern A/C, real `ResourceSource`/`RefreshOperation` contracts. | Inventing a constructor signature or a CLI. |
-| "I have 10,000 resources and only a few change between refreshes. How can I avoid refreshing everything?" | Yes | [`references/incremental-refresh.md`](../skills/refresh-engine/references/incremental-refresh.md) and [`references/fingerprinting.md`](../skills/refresh-engine/references/fingerprinting.md); verified `test_ten_thousand_unchanged_resources_are_skipped`. | Claiming an unverified performance guarantee, or reprocessing everything "to be safe". |
-| "I need refresh every hour but cannot block my application's main execution." | Yes | [`references/scheduling.md`](../skills/refresh-engine/references/scheduling.md) → `AsyncScheduler`/`ExternalSchedulerAdapter`, actual start/pause/resume/stop lifecycle. | A manual thread or blocking `while True` loop. |
-| "Resource A depends on B and B changes. How should refresh-engine handle this?" | Yes | [`references/dependency-refresh.md`](../skills/refresh-engine/references/dependency-refresh.md) → `DependencyGraph`/`ImpactAnalyzer`/topological `RefreshPlan.levels`. | Manually ordering refresh calls in application code. |
-| "Discovery failed temporarily. Should I assume every existing resource was deleted?" | Yes | [`references/state-management.md`](../skills/refresh-engine/references/state-management.md) → `DiscoveryError` handling, `complete=False` never implies deletion. | Destructive deletion inferred from a transient failure. |
-| "Should I build an MCP-specific refresh engine on top of refresh-engine?" | Yes | `SKILL.md` ownership-boundary statement and Pattern E adapter in [`references/integration.md`](../skills/refresh-engine/references/integration.md). | Domain-coupling `refresh_engine` types, or duplicating its infrastructure. |
-| "Add tests for added/modified/deleted/dependency-changed resources." | Yes | [`references/integration.md`](../skills/refresh-engine/references/integration.md) testing section, `tests/helpers.py` fixture pattern. | Mocking instead of the package's own in-memory test doubles. |
-| "Why wasn't a deleted resource removed from the destination?" | Yes | [`references/troubleshooting.md`](../skills/refresh-engine/references/troubleshooting.md) → discovery-completeness diagnosis. | Assuming a bug before checking `DiscoveryResult.complete`. |
-
-## Repository validation
-
-Skill-only work should at least run the structural/link/source review above
-and review the resulting Git diff. If runtime files change, run the actual
-repository CI-equivalent checks (`ruff check .`, `black --check .`,
-`pyrefly check`, `pytest`, `python scripts/check_docs_examples.py`,
-`python scripts/run_examples.py`, `mkdocs build --strict`) as defined in
-[`.github/workflows/ci.yml`](https://github.com/smuniharish/refresh-engine/blob/main/.github/workflows/ci.yml).
-This distribution must not require a refresh-engine runtime change.
+| Request | Expected route | Must avoid |
+| --- | --- | --- |
+| "Keep our search index in sync with the articles table." | `SKILL.md` workflow, the template, and `sources-and-operations.md` | Hand-written diffing, hashing, or scheduling. |
+| "We have 50,000 documents and only a few change each hour." | `change-detection.md`: cheap indicators and fingerprint choice | Refreshing everything, or unreliable indicators marked reliable. |
+| "Refresh every 10 minutes without blocking the web app." | `scheduling.md`: `AsyncScheduler` within the application lifespan | Threads with blocking loops, or `time.sleep`. |
+| "Report B depends on table A; rebuild B when A changes." | `dependencies.md`: declared dependencies and `DEPENDENCY_AWARE` | Ordering calls manually, or one refresh per level. |
+| "The catalog API timed out; were all our records deleted?" | `failure-handling.md` and `troubleshooting.md`: discovery failures never delete | Returning an empty complete discovery on errors. |
+| "Make state survive restarts in PostgreSQL." | `state-stores.md`: `StateStoreABC` and `apply_changes` | Non-atomic writes, or lossy serialization. |
+| "Write tests for added, modified, deleted, and failed resources." | `testing.md`: in-memory fakes and result assertions | Mocking engine internals. |
+| "Why is every resource refreshed on every run?" | `troubleshooting.md`: volatile fingerprints or lost state | Disabling change detection. |
