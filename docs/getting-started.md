@@ -1,46 +1,130 @@
 # Getting started
 
-Install the package into a Python 3.12 environment:
+## Install
 
-```console
-uv add refresh-engine
-```
+refresh-engine requires Python 3.12 or newer.
 
-Alternatively, with pip:
+=== "uv"
 
-```console
-python -m pip install refresh-engine
-```
+    ```console
+    uv add refresh-engine
+    ```
 
-Then implement two async contracts: `ResourceSource` and `RefreshOperation`.
+=== "pip"
+
+    ```console
+    python -m pip install refresh-engine
+    ```
+
+Its only runtime dependencies are [structlog](https://www.structlog.org) and
+[tenacity](https://tenacity.readthedocs.io).
+
+## Integrate in three steps
+
+An integration consists of a **source** that lists and reads resources, and an
+**operation** that applies each change to its destination.
+
+### 1. Describe the source
+
+A source implements two coroutines. `discover()` lists the resources cheaply and
+reports whether the listing is complete. `snapshot()` reads one resource in full.
 
 ```python
+from refresh_engine import DiscoveryResult, Resource, ResourceSnapshot
+
+CATALOG = {"apples": 120, "pears": 80}
+
+
+class InventorySource:
+    async def discover(self) -> DiscoveryResult:
+        return DiscoveryResult(Resource(item) for item in sorted(CATALOG))
+
+    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
+        return ResourceSnapshot(
+            resource.resource_id, content=CATALOG[resource.resource_id]
+        )
+```
+
+### 2. Describe the operation
+
+The operation receives the resource, its snapshot, the planned action, and the
+request. It raises an exception to report a failure.
+
+```python
+from refresh_engine import PlanAction, RefreshRequest, Resource, ResourceSnapshot
+
+SEARCH_INDEX: dict[str, int] = {}
+
+
+async def update_index(
+    resource: Resource,
+    snapshot: ResourceSnapshot | None,
+    action: PlanAction,
+    request: RefreshRequest,
+    /,
+) -> None:
+    if action is PlanAction.DELETE:
+        SEARCH_INDEX.pop(resource.resource_id, None)
+    elif snapshot is not None:
+        SEARCH_INDEX[resource.resource_id] = snapshot.content
+```
+
+### 3. Run refreshes
+
+<!-- test -->
+```python
 import asyncio
+
 from refresh_engine import (
-    DiscoveryResult, RefreshEngine, Resource, ResourceSnapshot,
+    DiscoveryResult,
+    PlanAction,
+    RefreshEngine,
+    RefreshRequest,
+    Resource,
+    ResourceSnapshot,
 )
 
-class Source:
-    async def discover(self):
-        async def stream():
-            yield Resource("one", metadata={"group": "demo"})
-        return DiscoveryResult(stream(), complete=True)
+CATALOG = {"apples": 120, "pears": 80}
+SEARCH_INDEX: dict[str, int] = {}
 
-    async def snapshot(self, resource):
+
+class InventorySource:
+    async def discover(self) -> DiscoveryResult:
+        return DiscoveryResult(Resource(item) for item in sorted(CATALOG))
+
+    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
         return ResourceSnapshot(
-            resource.resource_id,
-            content={"payload": 42},
-            metadata=resource.metadata,
+            resource.resource_id, content=CATALOG[resource.resource_id]
         )
 
-async def operation(resource, snapshot, action, request):
-    print(action.value, resource.resource_id if resource else "deleted resource")
 
-async def main():
-    engine = RefreshEngine(Source(), operation)
-    result = await engine.refresh()
-    print(result.status.value, result.refreshed_count)
-    await engine.close()
+async def update_index(
+    resource: Resource,
+    snapshot: ResourceSnapshot | None,
+    action: PlanAction,
+    request: RefreshRequest,
+    /,
+) -> None:
+    if action is PlanAction.DELETE:
+        SEARCH_INDEX.pop(resource.resource_id, None)
+    elif snapshot is not None:
+        SEARCH_INDEX[resource.resource_id] = snapshot.content
+
+
+async def main() -> None:
+    async with RefreshEngine(InventorySource(), update_index) as engine:
+        first = await engine.refresh()
+        print(f"{first.status}: refreshed {first.refreshed_count}", SEARCH_INDEX)
+
+        CATALOG["pears"] = 75
+        del CATALOG["apples"]
+        second = await engine.refresh()
+        print(
+            f"{second.status}: modified {second.modified_count},"
+            f" deleted {second.deleted_count}",
+            SEARCH_INDEX,
+        )
+
 
 asyncio.run(main())
 ```
@@ -48,15 +132,18 @@ asyncio.run(main())
 Output:
 
 ```text
-refresh one
-success 1
+success: refreshed 2 {'apples': 120, 'pears': 80}
+success: modified 1, deleted 1 {'pears': 75}
 ```
 
-The first successful run records fingerprints. A subsequent incremental run skips
-unchanged resources. Keep resource IDs stable, fingerprints deterministic, and the
-operation idempotent. Always call `close()` during async shutdown. For a synchronous
-host, submit requests through an externally owned scheduler adapter.
+The first refresh records a fingerprint for every resource. The second one
+refreshes only the modified resource and deletes the removed one. `async with`
+closes the engine, which waits for running work and delivers pending events.
 
-Next read [Sources and operations](guides/sources-and-operations.md) and
-[State and failure safety](guides/state-and-failure-safety.md), or continue with the
-[examples](guides/examples-and-results.md).
+## Next steps
+
+- Learn the vocabulary in [Concepts](concepts.md).
+- Choose a [refresh mode](guides/refresh-modes.md), make change detection cheap
+  with [cheap indicators](guides/change-detection.md#cheap-indicators), and keep
+  state across restarts with a [durable state store](guides/state-stores.md).
+- Before going live, review the [production checklist](guides/production.md).

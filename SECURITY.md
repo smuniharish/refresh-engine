@@ -2,25 +2,40 @@
 
 ## Supported versions
 
-The latest released minor version receives security fixes. Pre-release and older
-minor versions may require upgrading before a fix can be applied.
+Security fixes are released for the latest minor version.
+
+| Version | Supported |
+| --- | --- |
+| 0.2.x | Yes |
+| 0.1.x | No; upgrade to 0.2 |
 
 ## Reporting a vulnerability
 
-Do not open a public issue. Open the repository's **Security** tab, select
-**Advisories**, and choose **Report a vulnerability** to create a private report.
-Include affected versions, impact, reproduction steps, and any proposed mitigation.
-Do not include production secrets or personal data. If private vulnerability
-reporting is unavailable, ask the repository owner to enable it before sharing
-sensitive details.
+Do not report vulnerabilities in public issues. Use
+[private vulnerability reporting](https://github.com/smuniharish/refresh-engine/security/advisories/new)
+instead, and include:
 
-Maintainers will acknowledge a report as soon as practical, coordinate validation
-and remediation privately, and disclose after a fix is available. Avoid public
-disclosure until that coordination is complete.
+- the affected versions;
+- the impact, and how an attacker could exploit it;
+- steps or code to reproduce it;
+- a proposed fix or mitigation, if you have one.
 
-## Operational scope
+Do not include production secrets or personal data. The maintainer acknowledges
+reports as soon as possible, coordinates the fix privately, and publishes an
+advisory when a fixed release is available. Please keep the report confidential
+until then.
 
-Applications control source access, operation side effects, persistence, logging, and
-secrets. Treat resource content and metadata as untrusted. Use timeouts, bounded
-concurrency, least-privilege credentials, a redacting event handler, and a durable
-transactional store appropriate to the deployment.
+## Securing an integration
+
+refresh-engine runs code that the application provides: the source, the operation,
+the state store, and event handlers. The application is responsible for the
+credentials they use and the systems they change. In production:
+
+- treat resource content and metadata as untrusted input;
+- bound every external call with timeouts, and limit concurrency to what the
+  systems involved can sustain;
+- use credentials with the least privilege the source, operation, and state store
+  need;
+- keep secrets out of request metadata and events, and log through a redacting
+  handler such as `StructlogEventHandler` with the default redactor;
+- use a durable, transactional state store.

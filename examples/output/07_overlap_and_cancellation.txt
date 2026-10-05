@@ -1,0 +1,6 @@
+coalesce:         success, success, success (refreshes started: 2)
+queue:            success, success, success (refreshes started: 3)
+skip_if_running:  success, skipped, skipped (refreshes started: 1)
+cancel_previous:  cancelled, cancelled, success (refreshes started: 2)
+caller cancelled: committed states=0
+shutdown:         cancelled, the refresh was cancelled because the engine is closing

@@ -1,0 +1,6 @@
+first:     success, refreshed=2
+           operations: refresh alpha, refresh beta
+unchanged: success, skipped=2
+           operations: none
+changed:   success, added=1, modified=1, deleted=1
+           operations: refresh alpha, refresh gamma, delete beta

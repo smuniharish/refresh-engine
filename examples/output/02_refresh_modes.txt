@@ -1,0 +1,10 @@
+full:             refreshed=4
+                  operations: refresh banner, refresh catalog, refresh pricing, refresh search-index
+targeted by ID:   refreshed=1
+                  operations: refresh banner
+targeted by tag:  refreshed=1
+                  operations: refresh pricing
+incremental:      refreshed=1
+                  operations: refresh catalog
+dependency-aware: refreshed=2, impacted=1
+                  operations: refresh pricing, refresh search-index

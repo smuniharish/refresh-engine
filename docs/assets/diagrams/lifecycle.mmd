@@ -1,0 +1,29 @@
+sequenceDiagram
+    autonumber
+    participant C as Caller
+    participant E as RefreshEngine
+    participant ST as StateStore
+    participant S as ResourceSource
+    participant O as RefreshOperation
+
+    C->>E: refresh(mode, ...)
+    E->>ST: load_all()
+    ST-->>E: previous states
+    E->>S: discover()
+    S-->>E: DiscoveryResult(resources, complete)
+    loop each resource, bounded by max_concurrency
+        alt reliable cheap indicator unchanged
+            E->>E: reuse the previous state
+        else otherwise
+            E->>S: snapshot(resource)
+            S-->>E: ResourceSnapshot
+            E->>E: fingerprint and classify
+        end
+    end
+    E->>E: plan operations in dependency order
+    loop each planned resource, dependencies first
+        E->>O: operation(resource, snapshot, action, request)
+        O-->>E: success or exception, retried per RetryConfig
+    end
+    E->>ST: commit successful state in one transaction
+    E-->>C: RefreshResult

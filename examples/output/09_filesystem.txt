@@ -1,0 +1,3 @@
+indexed:  2 files [('docs/guide.md', 7), ('readme.txt', 5)]
+rescan:   unchanged=2
+changes:  modified=1, deleted=1 [('readme.txt', 11)]

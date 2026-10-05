@@ -1,0 +1,16 @@
+level='info' event='refresh_started' correlation_id='req-42' metadata={'tenant': 'acme', 'api_token': '[REDACTED]'} mode='incremental' trigger='manual'
+level='info' event='discovery_started' correlation_id='req-42'
+level='info' event='discovery_completed' complete=True correlation_id='req-42' discovered=2
+level='info' event='snapshot_started' correlation_id='req-42' resources=2
+level='info' event='snapshot_completed' cheap_matches=0 correlation_id='req-42' failed=0 snapshotted=2
+level='info' event='detection_completed' added=2 correlation_id='req-42' deleted=0 dependency_changed=0 modified=0 unchanged=0
+level='info' event='planning_completed' correlation_id='req-42' delete=0 impacted=0 refresh=2
+level='info' event='execution_started' correlation_id='req-42' operations=2
+level='info' event='execution_completed' correlation_id='req-42' failed=0 succeeded=2
+level='info' event='state_persisted' correlation_id='req-42' deleted=0 written=2
+level='info' event='refresh_completed' added=2 correlation_id='req-42' deleted=0 dependency_changed=0 discovered=2 failed=0 impacted=0 mode='incremental' modified=0 refreshed=2 skipped=0 status='success' trigger='manual' unchanged=0
+metrics:
+  refresh_engine.operations{action=refresh,outcome=success} = 2
+  refresh_engine.refreshes{mode=incremental,status=success,trigger=manual} = 1
+  refresh_engine.resources.detected{change=added} = 2
+completed events: 1, handler errors: 0

@@ -1,16 +1,24 @@
 # API reference
 
-The supported imports are listed by `refresh_engine.__all__`. Protocols, models,
-strategies, selectors, stores, events, observability helpers, and schedulers are
-documented here. User code can import all documented symbols directly from
-`refresh_engine`.
+Every supported name is importable from the `refresh_engine` package. Modules whose
+names start with an underscore are internal and may change without notice.
 
-- [Engine](engine.md)
-- [Extension contracts](contracts.md)
-- [Models and configuration](models.md)
-- [Fingerprints and selectors](strategies.md)
-- [Events, stores, and scheduling](services.md)
+```python
+from refresh_engine import RefreshEngine, RefreshMode, Resource, ResourceSnapshot
+```
 
-Public protocols use structural typing: implementations need the documented
-methods, not inheritance. The compatibility guarantee covers the symbols documented
-here and exported from `refresh_engine`.
+| Page | Contents |
+| --- | --- |
+| [Engine](engine.md) | `RefreshEngine` |
+| [Models and configuration](models.md) | Resources, snapshots, state, requests, results, configuration, and enumerations |
+| [Extension contracts](contracts.md) | Protocols and abstract base classes for sources, operations, fingerprints, state, selectors, and metrics |
+| [Fingerprints](fingerprints.md) | Built-in fingerprint strategies and `canonical_digest` |
+| [Selectors](selectors.md) | `IDSelector`, `TagSelector`, and `PredicateSelector` |
+| [Events](events.md) | Lifecycle events, event handlers, and publishers |
+| [Logging and metrics](observability.md) | structlog and metrics handlers, metric sinks, and redaction |
+| [Scheduling](scheduling.md) | `AsyncScheduler` and `ExternalSchedulerAdapter` |
+| [State stores](stores.md) | `InMemoryStateStore` |
+| [Exceptions](errors.md) | The exception hierarchy |
+
+The package follows [semantic versioning](https://semver.org). The names listed in
+this reference form the public API.

@@ -1,0 +1,2 @@
+initial: refreshed=10000, reads=10000
+update:  refreshed=10, reads=10, unchanged=9990

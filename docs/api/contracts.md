@@ -1,48 +1,46 @@
 # Extension contracts
 
-## Protocols and abstract base classes
+Each extension point is available as a protocol, for structural typing, and as an
+abstract base class, which enforces the required methods and, where useful, adds
+reusable behavior. Protocol parameters are positional-only, so implementations may
+name their parameters freely.
 
-Every extension family has two integration styles:
-
-- protocols preserve structural typing for existing objects that already have the
-  required methods;
-- ABCs provide inheritance, abstract-method enforcement, discoverable lifecycle
-  methods, and reusable defaults.
-
-Built-in stores, fingerprint strategies, selectors, event publishing, metrics, and
-schedulers inherit the corresponding ABCs while still satisfying their protocols.
-Applications can choose either style without adapters.
+## Sources
 
 ::: refresh_engine.ResourceSource
 
-::: refresh_engine.FingerprintStrategy
+::: refresh_engine.ResourceSourceABC
+
+## Operations
 
 ::: refresh_engine.RefreshOperation
 
-::: refresh_engine.StateStore
+::: refresh_engine.RefreshOperationABC
 
-::: refresh_engine.StateTransaction
+## Fingerprint strategies
 
-::: refresh_engine.ResourceSelector
-
-::: refresh_engine.MetricsSink
-
-## Abstract base classes
-
-::: refresh_engine.ResourceSourceABC
+::: refresh_engine.FingerprintStrategy
 
 ::: refresh_engine.FingerprintStrategyABC
 
-::: refresh_engine.RefreshOperationABC
+## State stores
+
+::: refresh_engine.StateStore
 
 ::: refresh_engine.StateStoreABC
 
+::: refresh_engine.StateTransaction
+
 ::: refresh_engine.StateTransactionABC
+
+## Selectors
+
+::: refresh_engine.ResourceSelector
 
 ::: refresh_engine.ResourceSelectorABC
 
-::: refresh_engine.EventPublisherABC
+## Metric sinks
+
+::: refresh_engine.MetricsSink
 
 ::: refresh_engine.MetricsSinkABC
-
-::: refresh_engine.AsyncSchedulerABC

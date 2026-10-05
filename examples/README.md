@@ -1,37 +1,45 @@
-# Runnable examples
+# Examples
 
-Run examples from this directory with Python 3.12 after installing the package:
+Runnable, self-contained programs that use only the public `refresh_engine` API.
+Each example prints deterministic output, and the expected output is stored in
+[`output/`](output/) and verified in continuous integration.
 
-```text
-python 01_basic_and_modes.py
+| Example | Demonstrates |
+| --- | --- |
+| [`01_quickstart.py`](01_quickstart.py) | First, unchanged, and changed incremental refreshes |
+| [`02_refresh_modes.py`](02_refresh_modes.py) | Full, targeted (IDs and composed selectors), incremental, and dependency-aware refreshes |
+| [`03_dependencies.py`](03_dependencies.py) | Dependency ordering, skipped dependents, automatic retries, deletions, and cycles |
+| [`04_fingerprints.py`](04_fingerprints.py) | Reliable cheap indicators, `ContentHash`, and a custom fingerprint strategy |
+| [`05_scheduling.py`](05_scheduling.py) | `AsyncScheduler` and refreshes requested from a thread-based scheduler |
+| [`06_failure_handling.py`](06_failure_handling.py) | Retries, timeouts, partial discovery, and the fail-fast policy |
+| [`07_overlap_and_cancellation.py`](07_overlap_and_cancellation.py) | Every overlap policy, caller cancellation, and shutdown |
+| [`08_observability.py`](08_observability.py) | Structured logging with redaction, and metrics |
+| [`09_filesystem.py`](09_filesystem.py) | Files as resources, with blocking I/O kept off the event loop |
+| [`10_sqlite_state_store.py`](10_sqlite_state_store.py) | Durable state in SQLite across restarts |
+| [`11_postgres_state_store.py`](11_postgres_state_store.py) | Durable state in PostgreSQL across restarts |
+| [`12_abc_extensions.py`](12_abc_extensions.py) | Extensions built on the abstract base classes |
+| [`13_scale.py`](13_scale.py) | Ten thousand resources, of which only the changed ones are read |
+
+[`common.py`](common.py) holds the in-memory source and operation that several
+examples share. [`sqlite_store.py`](sqlite_store.py) and
+[`postgres_store.py`](postgres_store.py) are reference state stores that an
+application can adapt; they are not part of the installed package.
+
+## Running the examples
+
+Install the package, then run an example from this directory:
+
+```console
+python 01_quickstart.py
 ```
 
-The examples are domain-neutral and cover all requested integration categories:
+Example 11 needs a PostgreSQL server and the `psycopg` package. Point it at a
+database whose `refresh_engine_state` table it may create and clear:
 
-| Category | Example |
-| --- | --- |
-| basic and incremental refresh | `01_basic_and_modes.py` |
-| full refresh | `01_basic_and_modes.py` |
-| targeted refresh and selectors | `01_basic_and_modes.py`, `03_triggers_and_selectors.py` |
-| dependency-aware refresh | `02_dependencies_and_fingerprints.py` |
-| fingerprint strategies | `02_dependencies_and_fingerprints.py` |
-| event and query triggers | `03_triggers_and_selectors.py` |
-| asyncio scheduling | `04_async_and_external_scheduling.py` |
-| external scheduling | `04_async_and_external_scheduling.py` |
-| retry, timeout, and failure policy | `06_resilience_and_partial_discovery.py` |
-| partial-discovery/deletion safety | `06_resilience_and_partial_discovery.py` |
-| events, logging, redaction, and metrics | `07_events_and_observability.py` |
-| custom state stores and overlap policy | `08_custom_store_and_overlap.py` |
-| filesystem resources | `09_filesystem_resources.py` |
-| 10,000 resources and generic consumer types | `10_scale_and_genericity.py` |
-| cancellation and graceful shutdown | `11_cancellation_and_shutdown.py` |
-| durable SQLite state across restarts | `12_sqlite_state_store.py` |
-| inheritance-based ABC extensions | `13_abc_extensions.py` |
-| durable PostgreSQL state, restart continuity, and rollback | `14_postgres_state_store.py` |
+```console
+export REFRESH_ENGINE_POSTGRES_DSN="postgresql://postgres:postgres@localhost:5432/postgres"
+python 11_postgres_state_store.py
+```
 
-Each example owns and shuts down its scheduler/engine. They use only the public
-package API, plus documented observability helpers.
-
-The SQLite and PostgreSQL store implementations are consumer-owned reference adapters,
-not production package exports. The PostgreSQL smoke example requires psycopg from the
-development dependency group and a `REFRESH_ENGINE_POSTGRES_DSN` environment variable.
+From the repository root, `python scripts/run_examples.py` runs every example and
+compares its output with the expected output.

@@ -1,0 +1,3 @@
+first start:   success, operations: refresh alpha, refresh beta
+restart:       success, operations: none
+after change:  success, operations: refresh alpha, delete beta

@@ -1,0 +1,18 @@
+flowchart LR
+    schema["schema<br/>changed · refreshed"]
+    tables["tables<br/>impacted · failed"]
+    indexes["indexes<br/>impacted · refreshed"]
+    views["views<br/>skipped"]
+    reports["reports<br/>skipped"]
+
+    schema --> tables
+    schema --> indexes
+    tables --> views
+    views --> reports
+
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    classDef failed fill:#ffebee,stroke:#c62828,color:#b71c1c
+    classDef skipped fill:#f5f5f5,stroke:#9e9e9e,color:#424242,stroke-dasharray: 4 3
+    class schema,indexes ok
+    class tables failed
+    class views,reports skipped

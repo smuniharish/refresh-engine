@@ -1,235 +1,126 @@
-# Scheduling
+# Scheduling, overlap, and shutdown
 
-Source: `src/refresh_engine/scheduling/async_scheduler.py`,
-`src/refresh_engine/scheduling/external.py`,
-`docs/guides/triggers-and-scheduling.md`.
+## Interval refreshes
 
-## Mental model
-
-```
-Application
-  |
-  +-- Main execution (never blocked by scheduled refresh)
-  |
-  +-- AsyncScheduler (owned background task on the same event loop)
-          |
-          +-- interval timer (APScheduler AsyncIOScheduler under the hood)
-          +-- on each tick: create a task that calls your callback
-                  -> engine.refresh(trigger=TriggerSource.SCHEDULED)
-```
-
-`AsyncScheduler` never blocks the caller: `await scheduler.start()` returns as
-soon as the schedule is installed, not when the first refresh completes.
-Refreshes run as independently created `asyncio.Task`s on the same loop.
-
-## `AsyncScheduler` (asyncio-native, in-process)
+`AsyncScheduler` runs a coroutine at a fixed interval on the running event loop:
 
 ```python
-from refresh_engine import AsyncScheduler, TriggerSource
+from refresh_engine import AsyncScheduler, RefreshEngine, TriggerSource
 
+engine = RefreshEngine(source, operation, store=store)
 scheduler = AsyncScheduler(
     lambda: engine.refresh(trigger=TriggerSource.SCHEDULED),
-    interval=60,            # seconds; must be > 0
-    run_immediately=True,   # fire once immediately, then every `interval`
+    interval=300,
+    run_immediately=True,
 )
-await scheduler.start()
-...
-await scheduler.stop()
-await engine.close()
+
+async with engine, scheduler:
+    await shutdown_requested.wait()
 ```
 
-Lifecycle (`AsyncSchedulerABC`): `start()`, `pause()`, `resume()`, `stop()` —
-all `async`. `SchedulerError` is raised for invalid transitions: starting an
-already-started scheduler, or pausing/resuming from the wrong state.
+- Runs follow a fixed grid measured from `start()`. A slow run skips the missed
+  slots instead of running back to back, and runs never overlap.
+- `pause()` skips runs until `resume()`. `stop()` waits until the scheduler has
+  stopped, including an active run, and `stop(cancel=True)` cancels the run.
+  Stopping is idempotent. From the callback itself, `stop()` never waits; from code
+  that a scheduled run may wait for, such as an operation of the engine it
+  refreshes, use `stop(wait=False)`. `state` is a `SchedulerState`.
+- A callback exception is logged to the `refresh_engine` logger, published as
+  `SCHEDULER_RUN_FAILED`, and the schedule continues. A failed refresh is not an
+  exception; inspect results in the callback if you need to react to them.
+- `async with engine, scheduler:` starts the scheduler, and on exit stops it before
+  closing the engine.
 
-- `run_immediately=False` (default) waits a full `interval` before the first
-  callback.
-- `cancel_active_on_stop=False` (default) lets an in-flight callback finish
-  before `stop()` returns; set `True` to cancel it instead. If you enable
-  cancellation, your `RefreshOperation` and `ResourceSource` must remain safe
-  under `CancelledError` (see [state-management.md](state-management.md)).
-- `stop()` shuts down the underlying APScheduler timer, wakes the internal
-  loop, optionally cancels the active callback, and awaits the scheduler's own
-  task — it is safe to call even if `start()` was never called (no-op).
-
-## `ExternalSchedulerAdapter` (another system owns timing)
+Inside a web application, tie both to the application's lifespan. For example,
+with FastAPI:
 
 ```python
-from refresh_engine import ExternalSchedulerAdapter, RefreshRequest, TriggerSource
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from refresh_engine import AsyncScheduler, RefreshEngine, TriggerSource
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    engine = RefreshEngine(source, operation, store=store)
+    scheduler = AsyncScheduler(
+        lambda: engine.refresh(trigger=TriggerSource.SCHEDULED), interval=300
+    )
+    async with engine, scheduler:
+        app.state.engine = engine
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/refresh/{resource_id}")
+async def refresh_resource(resource_id: str) -> dict[str, str]:
+    result = await app.state.engine.refresh(
+        resource_ids=resource_id, trigger=TriggerSource.QUERY
+    )
+    return {"status": result.status}
+```
+
+## External schedulers and other threads
+
+Use `ExternalSchedulerAdapter` when refreshes are triggered outside the event
+loop, for example by a thread-based job scheduler. Create it on the engine's loop:
+
+```python
+from refresh_engine import ExternalSchedulerAdapter
 
 adapter = ExternalSchedulerAdapter(engine.submit)
-result = await adapter.run(RefreshRequest(trigger=TriggerSource.EXTERNAL))
+
+result = await adapter.run()  # on the event loop
+result = adapter.run_threadsafe(timeout=600)  # from another thread, blocking
+future = adapter.submit_threadsafe()  # from another thread, non-blocking
 ```
 
-Use this when cron, a Kubernetes `CronJob`, Celery beat, or another
-application-level scheduler already owns timing — the adapter is just a thin
-`async run(request) -> RefreshResult` wrapper around `engine.submit`.
+- Without a request argument, the adapter submits an `INCREMENTAL` refresh with
+  the trigger `EXTERNAL`; pass a `RefreshRequest` to choose another.
+- `run_threadsafe()` raises `RuntimeError` on the loop's own thread, because it
+  would deadlock, and `TimeoutError` when `timeout` expires.
+- For cron-style batch jobs, skip the adapter: run a script that calls
+  `asyncio.run()` around one `refresh()`, with a durable state store.
 
-## Verified against
+## Overlapping requests
 
-[`examples/04_async_and_external_scheduling.py`](https://github.com/smuniharish/refresh-engine/blob/main/examples/04_async_and_external_scheduling.py)
-runs an `AsyncScheduler` immediately (`run_immediately=True`, `interval=60`)
-for one scheduled refresh, stops it, then performs a second refresh through
-`ExternalSchedulerAdapter`. Run the script directly to see both refreshes
-complete without blocking the surrounding `asyncio` program.
+An engine runs one refresh at a time. `RefreshConfig(overlap_policy=...)` decides
+what happens to requests that arrive meanwhile:
 
-## Triggers -> `RefreshRequest`
-
-Every integration path normalizes to a `RefreshRequest`:
-
-- `engine.refresh(...)` / `engine.submit(request)` — manual.
-- `EventTrigger(mapper).request_for(event)` — map an application event object
-  to a `RefreshRequest` (or `None` to ignore it).
-- `QueryTrigger().request(resource_ids, metadata=None)` — build a `TARGETED`
-  request for specific IDs (e.g. from a webhook payload).
-- `AsyncScheduler` — periodic, in-process.
-- `ExternalSchedulerAdapter` — periodic, externally owned.
-
-```python
-from refresh_engine import EventTrigger, QueryTrigger, TriggerSource, RefreshRequest
-
-event_trigger = EventTrigger(
-    lambda event: RefreshRequest(trigger=TriggerSource.EVENT) if event == "changed" else None
-)
-request = event_trigger.request_for("changed")
-if request is not None:
-    await engine.submit(request)
-
-query_request = QueryTrigger().request(["beta"], metadata={"caller": "webhook"})
-await engine.submit(query_request)
-```
-
-## Shutdown ordering
-
-Stop trigger intake before closing the engine, and stop a scheduler before
-closing its engine:
-
-```python
-try:
-    await scheduler.start()
-    await shutdown_requested.wait()
-finally:
-    await scheduler.stop()
-    await engine.close()
-```
-
-## Common mistakes
-
-- Calling `await engine.refresh()` directly inside a request handler on a
-  fixed timer using `time.sleep` — this blocks the event loop; use
-  `AsyncScheduler` (or an external scheduler) instead.
-- Never calling `scheduler.stop()` / `engine.close()` on shutdown, leaking the
-  background task and its owned resources.
-- Assuming `scheduler.start()` awaits the first refresh — it does not; it only
-  installs the schedule.
-
-## Concurrency, overlap, retries, and timeouts
-
-Source: `src/refresh_engine/core/models.py` (`RefreshConfig`, `RetryConfig`,
-`TimeoutConfig`), `src/refresh_engine/execution/coordinator.py`,
-`src/refresh_engine/execution/executor.py`.
-
-### `RefreshConfig`
-
-```python
-from refresh_engine import RefreshConfig, OverlapPolicy, FailurePolicy, RetryConfig, TimeoutConfig
-
-config = RefreshConfig(
-    max_concurrency=10,                      # bounded concurrent resource operations
-    overlap_policy=OverlapPolicy.COALESCE,    # default
-    failure_policy=FailurePolicy.BEST_EFFORT, # default
-    retry=RetryConfig(),                       # max_attempts=1 by default (no retry)
-    timeout=TimeoutConfig(),                   # all None by default (no timeouts)
-    cancel_active_on_shutdown=False,
-)
-```
-
-`max_concurrency` must be `>= 1`; timeouts must be `> 0` if set — both raise
-`ValueError` in `__post_init__` otherwise.
-
-### Bounded concurrency
-
-`RefreshExecutor.execute()` creates an `asyncio.Semaphore(max_concurrency)` and
-runs each dependency level's items concurrently through it; snapshot/fingerprint
-work during discovery is similarly worker-pooled at
-`min(max_concurrency, len(resources))`. Never bypass this by spawning your own
-unbounded tasks around the engine — if you need higher throughput, increase
-`max_concurrency` deliberately and size it to your downstream system's real
-capacity (connection pools, rate limits), not "as high as possible."
-
-### Overlap policy (`OverlapPolicy`, on `RefreshCoordinator`)
-
-| Policy | Behavior when a refresh is requested while one is already running/queued |
+| Policy | New request while a refresh runs |
 | --- | --- |
-| `SKIP_IF_RUNNING` | Returns `RefreshResult.skipped("refresh already running")` immediately; the new request does not run at all. |
-| `QUEUE` | The new request is queued and runs after the current one finishes, in submission order. |
-| `COALESCE` (default) | The new request is merged (`RefreshRequest.merge`) into the already-pending request; both callers' futures resolve to the one merged run's result. |
-| `CANCEL_PREVIOUS` | The active run (and any other pending ones) is cancelled; the new request becomes the one that runs. |
+| `COALESCE` (default) | Merges into a queued request that covers it, or else queues. Merged callers share one result. |
+| `QUEUE` | Queues and runs separately, in order. |
+| `SKIP_IF_RUNNING` | Returns a `SKIPPED` result immediately. |
+| `CANCEL_PREVIOUS` | Cancels the running and queued refreshes, whose callers get `CANCELLED` results, and runs next. |
 
-`RefreshRequest.merge` widens `mode` to `FULL` if either side is `FULL`, else
-to `DEPENDENCY_AWARE` if either side is `DEPENDENCY_AWARE`, unions
-`resource_ids`, keeps the max `priority`, merges `metadata`, keeps the earliest
-`requested_at`, and prefers the newer `correlation_id`. See
-[`examples/08_custom_store_and_overlap.py`](https://github.com/smuniharish/refresh-engine/blob/main/examples/08_custom_store_and_overlap.py)
-for two concurrent `engine.refresh()` calls resolving to one merged run under
-the default `COALESCE` policy.
+Coalescing never drops work: `FULL` covers every mode, `DEPENDENCY_AWARE` covers
+`INCREMENTAL`, and targeted requests merge into one that targets the union. An
+incremental and a targeted request run separately.
 
-### Failure policy (`FailurePolicy`)
+## Cancellation and shutdown
 
-| Policy | Behavior |
-| --- | --- |
-| `FAIL_FAST` | Stop executing further plan levels as soon as any resource in a level fails; do not persist any state from that refresh if any resource failed. |
-| `BEST_EFFORT` (default) | Keep executing remaining resources/levels; report `RefreshStatus.PARTIAL` if some failed, `SUCCESS` if none did. |
-| `RETRY_THEN_CONTINUE` | Retry failed resources per `RetryConfig`, then continue with best-effort semantics for whatever still fails. |
-
-### `RetryConfig`
-
-```python
-RetryConfig(
-    max_attempts=1,             # 1 = no retry; must be >= 1
-    initial_delay=0.1,
-    max_delay=5.0,
-    exponential_base=2.0,
-    jitter=0.0,
-    retryable_exceptions=(Exception,),
-)
-```
-
-Retries are implemented with Tenacity (`AsyncRetrying`, `stop_after_attempt`,
-`wait_exponential` + `wait_random` jitter) inside
-`RefreshExecutor._execute_item`, scoped to a single resource's operation call —
-not to discovery or the whole refresh. See
-[`examples/06_resilience_and_partial_discovery.py`](https://github.com/smuniharish/refresh-engine/blob/main/examples/06_resilience_and_partial_discovery.py)
-for a resource that fails once under `RETRY_THEN_CONTINUE` then succeeds on
-retry.
-
-### `TimeoutConfig`
-
-```python
-TimeoutConfig(
-    discovery=None,         # wraps ResourceSource.discover() consumption
-    snapshot=None,          # wraps each ResourceSource.snapshot() call
-    resource_refresh=None,  # wraps each RefreshOperation call
-    overall=None,           # wraps the entire refresh lifecycle
-)
-```
-
-All default to `None` (no timeout). Any configured timeout uses
-`asyncio.wait_for` and raises the equivalent `TimeoutError`/`CancelledError`
-path — treat exceeded timeouts the same as any other failure for that
-resource (see [state-management.md](state-management.md)); the corresponding
-operation may be retried per `RetryConfig`, so operations must be idempotent.
-
-### Common concurrency mistakes
-
-- Setting `max_concurrency` very high "for speed" without considering the
-  downstream system's real capacity.
-- Relying on `FAIL_FAST` in a large batch when a single unrelated resource
-  failure should not block hundreds of unrelated resources — prefer
-  `BEST_EFFORT` or `RETRY_THEN_CONTINUE` for large heterogeneous resource
-  sets.
-- Configuring retries with a non-idempotent operation — a partially applied
-  side effect can then be applied twice.
-- Assuming `COALESCE` guarantees the merged request preserves your exact
-  original `resource_ids`/`mode` — it widens per `RefreshRequest.merge`
-  semantics above.
+- Cancelling the task that awaits `refresh()` cancels the refresh once no other
+  caller waits for it, and raises `asyncio.CancelledError` in that task. Nothing is
+  committed for a cancelled refresh.
+- `close()` stops accepting requests, finishes running and queued refreshes, and
+  delivers pending events. `close(cancel=True)` cancels them, and their callers get
+  `CANCELLED` results. `close(wait=False)` returns without waiting.
+- Requests after `close()` raise `EngineClosedError`.
+- Leaving `async with engine:` closes the engine, cancelling active work if the
+  block raised.
+- An engine belongs to one event loop. Create it inside the running loop, and do
+  not share it across loops or threads; use `ExternalSchedulerAdapter` for other
+  threads.
+- A source, operation, fingerprint strategy, or state store must not wait for a
+  refresh of its own engine. Awaited directly there, `refresh()` raises
+  `RuntimeError` and `close()` returns without waiting; waits routed through another
+  task, such as `asyncio.gather`, never finish. Start follow-up refreshes with
+  `asyncio.create_task(engine.refresh(...))` without awaiting the task, and shut
+  down from such code with `close(wait=False)` or `stop(wait=False)`.
+- Event handlers run outside refreshes; they may await `refresh()` and `close()`
+  directly.

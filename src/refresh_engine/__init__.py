@@ -1,9 +1,13 @@
-"""Production-grade generic refresh infrastructure."""
+"""Asyncio-first, domain-neutral change detection and refresh orchestration.
 
-from refresh_engine.api import (
-    AsyncSchedulerABC,
-    EventHandler,
-    EventPublisherABC,
+Every supported name is importable from this package:
+
+```python
+from refresh_engine import RefreshEngine, Resource, ResourceSnapshot
+```
+"""
+
+from refresh_engine.contracts import (
     FingerprintStrategy,
     FingerprintStrategyABC,
     MetricsSink,
@@ -19,22 +23,47 @@ from refresh_engine.api import (
     StateTransaction,
     StateTransactionABC,
 )
-from refresh_engine.api.engine import RefreshEngine
-from refresh_engine.core.models import (
-    Change,
-    ChangeSet,
-    ChangeType,
+from refresh_engine.engine import RefreshEngine
+from refresh_engine.errors import (
+    ConfigurationError,
+    DependencyCycleError,
+    DiscoveryError,
+    EngineClosedError,
+    FingerprintError,
+    RefreshError,
+    SchedulerError,
+    SnapshotError,
+    StateStoreError,
+)
+from refresh_engine.events import (
+    EventHandler,
+    EventKind,
+    EventPublisher,
+    EventPublisherABC,
+    RefreshEvent,
+)
+from refresh_engine.fingerprints import (
+    CompositeHash,
+    ContentHash,
+    ETagFingerprint,
+    MetadataHash,
+    VersionTokenFingerprint,
+    canonical_digest,
+)
+from refresh_engine.models import (
     DiscoveryResult,
     FailurePolicy,
-    ImpactSet,
     OverlapPolicy,
     PlanAction,
     RefreshConfig,
+    RefreshIssue,
     RefreshMode,
+    RefreshPhase,
     RefreshRequest,
     RefreshResult,
     RefreshStatus,
     Resource,
+    ResourceExecutionResult,
     ResourceFingerprint,
     ResourceSnapshot,
     ResourceState,
@@ -42,109 +71,65 @@ from refresh_engine.core.models import (
     TimeoutConfig,
     TriggerSource,
 )
-from refresh_engine.detection import (
-    ChangeDetector,
-    CompositeHash,
-    ContentHash,
-    ETagFingerprint,
-    MetadataHash,
-    VersionTokenFingerprint,
-)
-from refresh_engine.errors import (
-    CancellationError,
-    ChangeDetectionError,
-    ConfigurationError,
-    DependencyCycleError,
-    DependencyError,
-    DiscoveryError,
-    ExecutionError,
-    FingerprintError,
-    PlanningError,
-    RefreshError,
-    SchedulerError,
-    SnapshotError,
-    StateStoreError,
-)
-from refresh_engine.events import EventKind, EventPublisher, RefreshEvent
 from refresh_engine.observability import (
     InMemoryMetrics,
+    MetricsEventHandler,
     StructlogEventHandler,
     default_redactor,
-)
-from refresh_engine.planning import (
-    DependencyGraph,
-    ImpactAnalyzer,
-    RefreshPlanner,
 )
 from refresh_engine.scheduling import (
     AsyncScheduler,
     ExternalSchedulerAdapter,
+    SchedulerState,
 )
+from refresh_engine.selectors import IDSelector, PredicateSelector, TagSelector
 from refresh_engine.stores import InMemoryStateStore
-from refresh_engine.triggers import (
-    EventTrigger,
-    IDSelector,
-    PredicateSelector,
-    QueryTrigger,
-    TagSelector,
-)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "AsyncScheduler",
-    "AsyncSchedulerABC",
-    "CancellationError",
-    "Change",
-    "ChangeDetectionError",
-    "ChangeDetector",
-    "ChangeSet",
-    "ChangeType",
     "CompositeHash",
     "ConfigurationError",
     "ContentHash",
     "DependencyCycleError",
-    "DependencyError",
-    "DependencyGraph",
     "DiscoveryError",
     "DiscoveryResult",
     "ETagFingerprint",
+    "EngineClosedError",
     "EventHandler",
     "EventKind",
     "EventPublisher",
     "EventPublisherABC",
-    "EventTrigger",
-    "ExecutionError",
     "ExternalSchedulerAdapter",
     "FailurePolicy",
     "FingerprintError",
     "FingerprintStrategy",
     "FingerprintStrategyABC",
     "IDSelector",
-    "ImpactAnalyzer",
-    "ImpactSet",
     "InMemoryMetrics",
     "InMemoryStateStore",
     "MetadataHash",
+    "MetricsEventHandler",
     "MetricsSink",
     "MetricsSinkABC",
     "OverlapPolicy",
     "PlanAction",
-    "PlanningError",
     "PredicateSelector",
-    "QueryTrigger",
     "RefreshConfig",
     "RefreshEngine",
     "RefreshError",
     "RefreshEvent",
+    "RefreshIssue",
     "RefreshMode",
     "RefreshOperation",
     "RefreshOperationABC",
-    "RefreshPlanner",
+    "RefreshPhase",
     "RefreshRequest",
     "RefreshResult",
     "RefreshStatus",
     "Resource",
+    "ResourceExecutionResult",
     "ResourceFingerprint",
     "ResourceSelector",
     "ResourceSelectorABC",
@@ -154,6 +139,7 @@ __all__ = [
     "ResourceState",
     "RetryConfig",
     "SchedulerError",
+    "SchedulerState",
     "SnapshotError",
     "StateStore",
     "StateStoreABC",
@@ -165,5 +151,6 @@ __all__ = [
     "TimeoutConfig",
     "TriggerSource",
     "VersionTokenFingerprint",
+    "canonical_digest",
     "default_redactor",
 ]

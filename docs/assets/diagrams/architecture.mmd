@@ -1,0 +1,32 @@
+flowchart TB
+    subgraph engine["refresh-engine"]
+        direction LR
+        triggers["<b>Triggers</b><br/>refresh() · submit()<br/>AsyncScheduler<br/>ExternalSchedulerAdapter"]
+        coordinator["<b>Overlap policy</b><br/>coalesce · queue<br/>skip · cancel previous"]
+        pipeline["<b>Refresh pipeline</b><br/>observe · detect<br/>plan · execute"]
+        fingerprint["<b>FingerprintStrategy</b>"]
+        publisher["<b>EventPublisher</b>"]
+        triggers --> coordinator --> pipeline
+        pipeline --> fingerprint
+        pipeline --> publisher
+    end
+
+    subgraph application["Your application"]
+        direction LR
+        source["<b>ResourceSource</b><br/>discover() · snapshot()"]
+        operation["<b>RefreshOperation</b><br/>refresh or delete"]
+        store["<b>StateStore</b><br/>load_all() · transaction()"]
+        handlers["<b>Event handlers</b><br/>logs · metrics · custom"]
+    end
+
+    pipeline -- reads --> source
+    pipeline -- applies --> operation
+    pipeline -- persists --> store
+    publisher -- notifies --> handlers
+
+    classDef core fill:#e8eaf6,stroke:#3949ab,color:#1a237e
+    classDef app fill:#fff8e1,stroke:#f9a825,color:#4e342e
+    class triggers,coordinator,pipeline,fingerprint,publisher core
+    class source,operation,store,handlers app
+    style engine fill:none,stroke:#7986cb,stroke-dasharray:6 4,color:#7986cb
+    style application fill:none,stroke:#f9a825,stroke-dasharray:6 4,color:#f9a825

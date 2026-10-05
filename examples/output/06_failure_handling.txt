@@ -1,0 +1,7 @@
+retries:          success, attempts={'alpha': 3, 'beta': 3}
+partial listing:  deleted=0
+                  warning: deletion of 1 undiscovered resources was suppressed because discovery was incomplete
+fail-fast:        failed, started=2
+                  beta: attempt 1 failed
+                  persisted states=0
+next refresh:     success, refreshed=3
