@@ -163,5 +163,5 @@ project-includes = [
   "refresh-engine-skills",
   "tests/skill",
 ]
-search-path = ["src", ".", "examples"]
+search-path = ["src", ".", "examples", "scripts"]
 python-version = "3.12"

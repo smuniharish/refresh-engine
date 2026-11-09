@@ -7,7 +7,10 @@ repo_url = "https://github.com/smuniharish/refresh-engine"
 repo_name = "smuniharish/refresh-engine"
 edit_uri = "edit/master/docs/"
 copyright = "Copyright &copy; 2026 S. Muni Harish &middot; Apache License 2.0"
-exclude_docs = "assets/diagrams/*.mmd"
+exclude_docs = """
+assets/diagrams/*.mmd
+assets/diagrams/sources.sha256
+"""
 
 nav = [
   { "Home" = "index.md" },

@@ -98,6 +98,9 @@ light and dark PNG images. After editing a diagram, render the images with
 uv run python scripts/render_diagrams.py
 ```
 
+Rendering also records the source digests in `docs/assets/diagrams/sources.sha256`;
+CI fails when a diagram source changes without re-rendering its images.
+
 ## Agent Skill
 
 The skill in `refresh-engine-skills/skills/refresh-engine/` must describe the
