@@ -32,11 +32,13 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
+      - name: Install the auditor
+        run: uv sync --locked --no-default-groups --only-group audit
       - name: Audit runtime dependencies
         run: |
-          uv sync --locked --no-default-groups --only-group audit
-          uv run --no-sync pip-audit --strict
+          uv export --locked --no-default-groups --no-emit-project --format requirements-txt --output-file runtime.txt
+          uv run --no-sync pip-audit --strict --disable-pip --requirement runtime.txt
       - name: Audit all dependency groups and extras
         run: |
-          uv sync --locked --all-groups --all-extras
-          uv run --no-sync pip-audit --strict
+          uv export --locked --all-groups --all-extras --no-emit-project --format requirements-txt --output-file all.txt
+          uv run --no-sync pip-audit --strict --disable-pip --requirement all.txt

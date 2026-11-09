@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-      - run: uv sync --locked --only-group lint --only-group types
+      - run: uv sync --locked --no-default-groups --group lint --group types --group test --group examples --all-extras
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync ruff check --output-format=github .
       - run: uv run --no-sync pyrefly check
@@ -54,7 +54,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --locked --only-group test --all-extras
+      - run: uv sync --locked --no-default-groups --group test --all-extras
       - run: uv run --no-sync pytest --cov
 
   otel:
@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --locked --only-group test --extra otel
+      - run: uv sync --locked --no-default-groups --group test --extra otel
       - run: uv run --no-sync pytest --cov
 
   lowest:
@@ -89,7 +89,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --resolution lowest-direct --only-group test
+      - run: uv sync --resolution lowest-direct --no-default-groups --group test --all-extras
       - run: uv run --no-sync pytest
 
   examples:
@@ -120,7 +120,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --locked --only-group examples
+      - run: uv sync --locked --no-default-groups --group examples
       - run: uv run --no-sync python scripts/run_examples.py --strict-live
 
   package:
@@ -152,7 +152,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-      - run: uv sync --locked --only-group docs --only-group test
+      - run: uv sync --locked --no-default-groups --group docs --group test --all-extras
       - run: uv run --no-sync zensical build --strict
       - run: uv run --no-sync python scripts/check_docs.py
       - run: uv run --no-sync python scripts/check_site_links.py
