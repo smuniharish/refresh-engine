@@ -9,13 +9,15 @@ from refresh_engine import (
     DiscoveryResult,
     PlanAction,
     RefreshEngine,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
+    ResourceSource,
 )
 
 
-class DirectorySource:
+class DirectorySource(ResourceSource):
     """Discover the files below `root`; size and mtime act as a cheap indicator."""
 
     def __init__(self, root: Path) -> None:
@@ -44,7 +46,7 @@ class DirectorySource:
         return ResourceSnapshot(resource.resource_id, content=content)
 
 
-class Index:
+class Index(RefreshOperation):
     """Keep the size of every indexed file."""
 
     def __init__(self) -> None:

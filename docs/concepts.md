@@ -26,8 +26,9 @@ A **source** implements [`ResourceSource`][refresh_engine.ResourceSource]:
 
 ## Operations
 
-An **operation** implements [`RefreshOperation`][refresh_engine.RefreshOperation].
-The engine calls it once per planned resource with a
+An **operation** is an asynchronous function or a subclass of
+[`RefreshOperation`][refresh_engine.RefreshOperation]. The engine calls it once per
+planned resource with a
 [`PlanAction`][refresh_engine.PlanAction]:
 
 - `REFRESH` passes the discovered resource and its current snapshot;
@@ -104,5 +105,5 @@ result instead of being raised, each as a
 
 The engine publishes a [`RefreshEvent`][refresh_engine.RefreshEvent] at every step
 of a refresh. Subscribe handlers to an
-[`EventPublisher`][refresh_engine.EventPublisher] to log, measure, or react to
+[`AsyncEventPublisher`][refresh_engine.AsyncEventPublisher] to log, measure, or react to
 refreshes. See [Events, logging, and metrics](guides/observability.md).

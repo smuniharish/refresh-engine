@@ -7,21 +7,18 @@ from refresh_engine import RefreshEngine, Resource, ResourceSnapshot
 ```
 """
 
+from importlib.metadata import version
+
 from refresh_engine.contracts import (
     FingerprintStrategy,
-    FingerprintStrategyABC,
     MetricsSink,
-    MetricsSinkABC,
     RefreshOperation,
-    RefreshOperationABC,
+    RefreshOperationCallable,
+    RefreshOperationLike,
     ResourceSelector,
-    ResourceSelectorABC,
     ResourceSource,
-    ResourceSourceABC,
     StateStore,
-    StateStoreABC,
     StateTransaction,
-    StateTransactionABC,
 )
 from refresh_engine.engine import RefreshEngine
 from refresh_engine.errors import (
@@ -36,10 +33,12 @@ from refresh_engine.errors import (
     StateStoreError,
 )
 from refresh_engine.events import (
+    AsyncEventPublisher,
     EventHandler,
+    EventHandlerCallable,
+    EventHandlerLike,
     EventKind,
     EventPublisher,
-    EventPublisherABC,
     RefreshEvent,
 )
 from refresh_engine.fingerprints import (
@@ -79,15 +78,15 @@ from refresh_engine.observability import (
 )
 from refresh_engine.scheduling import (
     AsyncScheduler,
-    ExternalSchedulerAdapter,
     SchedulerState,
 )
 from refresh_engine.selectors import IDSelector, PredicateSelector, TagSelector
 from refresh_engine.stores import InMemoryStateStore
 
-__version__ = "0.2.0"
+__version__ = version("refresh-engine")
 
 __all__ = [
+    "AsyncEventPublisher",
     "AsyncScheduler",
     "CompositeHash",
     "ConfigurationError",
@@ -98,21 +97,19 @@ __all__ = [
     "ETagFingerprint",
     "EngineClosedError",
     "EventHandler",
+    "EventHandlerCallable",
+    "EventHandlerLike",
     "EventKind",
     "EventPublisher",
-    "EventPublisherABC",
-    "ExternalSchedulerAdapter",
     "FailurePolicy",
     "FingerprintError",
     "FingerprintStrategy",
-    "FingerprintStrategyABC",
     "IDSelector",
     "InMemoryMetrics",
     "InMemoryStateStore",
     "MetadataHash",
     "MetricsEventHandler",
     "MetricsSink",
-    "MetricsSinkABC",
     "OverlapPolicy",
     "PlanAction",
     "PredicateSelector",
@@ -123,7 +120,8 @@ __all__ = [
     "RefreshIssue",
     "RefreshMode",
     "RefreshOperation",
-    "RefreshOperationABC",
+    "RefreshOperationCallable",
+    "RefreshOperationLike",
     "RefreshPhase",
     "RefreshRequest",
     "RefreshResult",
@@ -132,20 +130,16 @@ __all__ = [
     "ResourceExecutionResult",
     "ResourceFingerprint",
     "ResourceSelector",
-    "ResourceSelectorABC",
     "ResourceSnapshot",
     "ResourceSource",
-    "ResourceSourceABC",
     "ResourceState",
     "RetryConfig",
     "SchedulerError",
     "SchedulerState",
     "SnapshotError",
     "StateStore",
-    "StateStoreABC",
     "StateStoreError",
     "StateTransaction",
-    "StateTransactionABC",
     "StructlogEventHandler",
     "TagSelector",
     "TimeoutConfig",

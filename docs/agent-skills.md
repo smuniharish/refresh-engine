@@ -60,5 +60,5 @@ refresh-engine"*. You can also invoke it explicitly:
 ## Keep it current
 
 The skill is versioned with the package, and its `metadata.version` matches the
-release it describes. After upgrading refresh-engine, reinstall the skill with the
-same command, or replace the copied directory.
+release it describes. Keep the skill synchronized with the package by reinstalling
+it with the same command, or replacing the copied directory.

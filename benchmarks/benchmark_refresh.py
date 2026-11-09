@@ -29,9 +29,9 @@ from time import perf_counter
 from typing import Any
 
 from refresh_engine import (
+    AsyncEventPublisher,
     DiscoveryResult,
     EventKind,
-    EventPublisher,
     PlanAction,
     RefreshEngine,
     RefreshEvent,
@@ -39,6 +39,7 @@ from refresh_engine import (
     RefreshRequest,
     Resource,
     ResourceSnapshot,
+    ResourceSource,
     __version__,
 )
 
@@ -53,7 +54,7 @@ PHASES = {
 }
 
 
-class Source:
+class Source(ResourceSource):
     """Resources with a reliable cheap indicator equal to their content."""
 
     def __init__(self, size: int) -> None:
@@ -95,11 +96,11 @@ async def sample(
     size: int, profile: str, *, memory: bool, phases: bool
 ) -> dict[str, Any]:
     source = Source(size)
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     durations: dict[str, float] = {}
     if phases:
 
-        def record(event: RefreshEvent) -> None:
+        async def record(event: RefreshEvent) -> None:
             name = PHASES.get(event.kind)
             if name is not None:
                 durations[name] = float(event.attributes["duration"])

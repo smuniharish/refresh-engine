@@ -28,10 +28,8 @@ from refresh_engine import ContentHash, RefreshEngine
 engine = RefreshEngine(source, operation, fingerprint=ContentHash())
 ```
 
-!!! note "Changing the strategy"
-    Fingerprints from different strategies never match, so switching strategies, or
-    upgrading from a release with a different encoding, makes the next refresh
-    report every resource as modified once.
+Fingerprints from different strategies never match, so switching strategies makes
+the next refresh report every resource as modified once.
 
 ## Canonical hashing
 
@@ -57,19 +55,19 @@ resource.
 ### Writing a strategy
 
 Implement [`FingerprintStrategy`][refresh_engine.FingerprintStrategy], or subclass
-[`FingerprintStrategyABC`][refresh_engine.FingerprintStrategyABC], and hash exactly
+[`FingerprintStrategy`][refresh_engine.FingerprintStrategy], and hash exactly
 the values that matter:
 
 ```python
 from refresh_engine import (
-    FingerprintStrategyABC,
+    FingerprintStrategy,
     ResourceFingerprint,
     ResourceSnapshot,
     canonical_digest,
 )
 
 
-class PublishedFields(FingerprintStrategyABC):
+class PublishedFields(FingerprintStrategy):
     async def fingerprint(self, snapshot: ResourceSnapshot, /) -> ResourceFingerprint:
         article = snapshot.content
         published = {"title": article["title"], "body": article["body"]}

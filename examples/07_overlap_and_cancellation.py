@@ -10,13 +10,14 @@ from refresh_engine import (
     RefreshConfig,
     RefreshEngine,
     RefreshMode,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
 )
 
 
-class SlowDestination:
+class SlowDestination(RefreshOperation):
     """Block every write until `release` is set, counting started writes."""
 
     def __init__(self) -> None:

@@ -33,7 +33,7 @@ from types import MappingProxyType
 from typing import Any, Final
 from uuid import UUID
 
-from refresh_engine.contracts import FingerprintStrategyABC
+from refresh_engine.contracts import FingerprintStrategy
 from refresh_engine.errors import FingerprintError
 from refresh_engine.models import ResourceFingerprint, ResourceSnapshot
 
@@ -69,7 +69,7 @@ def canonical_digest(value: object) -> str:
 
     Example:
         ```python
-        class TitleHash(FingerprintStrategyABC):
+        class TitleHash(FingerprintStrategy):
             async def fingerprint(self, snapshot, /):
                 title = snapshot.content["title"]
                 return ResourceFingerprint("sha256:title", canonical_digest(title))
@@ -281,7 +281,7 @@ def _fingerprint(algorithm: str, value: object) -> ResourceFingerprint:
     return ResourceFingerprint(algorithm, canonical_digest(value))
 
 
-class CompositeHash(FingerprintStrategyABC):
+class CompositeHash(FingerprintStrategy):
     """Fingerprint content, metadata, version, version token, and ETag together.
 
     This is the default strategy. Dependencies are not part of the fingerprint;
@@ -304,7 +304,7 @@ class CompositeHash(FingerprintStrategyABC):
         )
 
 
-class ContentHash(FingerprintStrategyABC):
+class ContentHash(FingerprintStrategy):
     """Fingerprint only the snapshot content."""
 
     __slots__ = ()
@@ -314,7 +314,7 @@ class ContentHash(FingerprintStrategyABC):
         return _fingerprint("sha256:content", snapshot.content)
 
 
-class MetadataHash(FingerprintStrategyABC):
+class MetadataHash(FingerprintStrategy):
     """Fingerprint only the snapshot metadata."""
 
     __slots__ = ()
@@ -324,7 +324,7 @@ class MetadataHash(FingerprintStrategyABC):
         return _fingerprint("sha256:metadata", snapshot.metadata)
 
 
-class VersionTokenFingerprint(FingerprintStrategyABC):
+class VersionTokenFingerprint(FingerprintStrategy):
     """Use the source-provided version token as the fingerprint."""
 
     __slots__ = ()
@@ -340,7 +340,7 @@ class VersionTokenFingerprint(FingerprintStrategyABC):
         return ResourceFingerprint("version-token", snapshot.version_token)
 
 
-class ETagFingerprint(FingerprintStrategyABC):
+class ETagFingerprint(FingerprintStrategy):
     """Use the source-provided ETag as the fingerprint."""
 
     __slots__ = ()

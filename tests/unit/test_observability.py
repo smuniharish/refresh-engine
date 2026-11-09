@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import threading
@@ -20,7 +21,6 @@ from refresh_engine import (
     InMemoryMetrics,
     MetricsEventHandler,
     MetricsSink,
-    MetricsSinkABC,
     RefreshEvent,
     StructlogEventHandler,
     default_redactor,
@@ -68,7 +68,7 @@ def kind_id(kind: object) -> str:
 
 def log_event(event: RefreshEvent, **options: Any) -> list[MutableMapping[str, Any]]:
     with capture_logs() as logs:
-        StructlogEventHandler(**options)(event)
+        asyncio.run(StructlogEventHandler(**options)(event))
     return logs
 
 
@@ -82,8 +82,12 @@ def record_metrics(
 ) -> tuple[Mapping[str, int], Mapping[str, tuple[float, ...]]]:
     metrics = InMemoryMetrics()
     handler = MetricsEventHandler(metrics, prefix=prefix)
-    for event in events:
-        handler(event)
+
+    async def record() -> None:
+        for event in events:
+            await handler(event)
+
+    asyncio.run(record())
     return metrics.snapshot()
 
 
@@ -403,10 +407,11 @@ def test_structlog_handler_uses_a_custom_logger() -> None:
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     ).bind(component="sync")
     handler = StructlogEventHandler(logger)
-
     with capture_logs() as global_logs:
-        handler(RefreshEvent(EventKind.REFRESH_COMPLETED, refresh_id="r-1"))
-        handler(RefreshEvent(EventKind.RESOURCE_REFRESH_STARTED))
+        asyncio.run(
+            handler(RefreshEvent(EventKind.REFRESH_COMPLETED, refresh_id="r-1"))
+        )
+        asyncio.run(handler(RefreshEvent(EventKind.RESOURCE_REFRESH_STARTED)))
 
     assert global_logs == []
     (entry,) = capture.entries
@@ -586,6 +591,11 @@ def test_metrics_use_the_configured_prefix() -> None:
     assert counters == {"app.sync.scheduler.failures": 1}
 
 
+def test_metrics_handler_requires_a_metrics_sink() -> None:
+    with pytest.raises(TypeError, match="sink must subclass MetricsSink"):
+        MetricsEventHandler(cast(Any, object()))
+
+
 @pytest.mark.parametrize("prefix", ["", None, 1])
 def test_metrics_handler_requires_a_non_empty_prefix(prefix: object) -> None:
     with pytest.raises(
@@ -594,11 +604,11 @@ def test_metrics_handler_requires_a_non_empty_prefix(prefix: object) -> None:
         MetricsEventHandler(InMemoryMetrics(), prefix=cast(Any, prefix))
 
 
-def test_metrics_handler_reports_to_protocol_only_sinks() -> None:
+async def test_metrics_handler_reports_to_metrics_sink() -> None:
     calls: list[tuple[str, str, float, Mapping[str, str] | None]] = []
 
-    class Sink:
-        def increment(
+    class Sink(MetricsSink):
+        async def increment(
             self,
             name: str,
             value: int = 1,
@@ -607,7 +617,7 @@ def test_metrics_handler_reports_to_protocol_only_sinks() -> None:
         ) -> None:
             calls.append(("increment", name, value, attributes))
 
-        def observe(
+        async def observe(
             self,
             name: str,
             value: float,
@@ -617,8 +627,8 @@ def test_metrics_handler_reports_to_protocol_only_sinks() -> None:
             calls.append(("observe", name, value, attributes))
 
     handler = MetricsEventHandler(Sink())
-    handler(RefreshEvent(EventKind.SCHEDULER_RUN_FAILED))
-    handler(
+    await handler(RefreshEvent(EventKind.SCHEDULER_RUN_FAILED))
+    await handler(
         RefreshEvent(
             EventKind.RESOURCE_REFRESH_COMPLETED,
             attributes={"action": "refresh", "duration": 3},
@@ -639,7 +649,7 @@ def test_metrics_handler_reports_to_protocol_only_sinks() -> None:
 def test_in_memory_metrics_implements_both_sink_contracts() -> None:
     metrics = InMemoryMetrics()
 
-    assert isinstance(metrics, MetricsSinkABC)
+    assert isinstance(metrics, MetricsSink)
     assert isinstance(metrics, MetricsSink)
 
 
@@ -647,48 +657,48 @@ def test_in_memory_metrics_starts_empty() -> None:
     assert InMemoryMetrics().snapshot() == ({}, {})
 
 
-def test_in_memory_metrics_keys_sort_attributes_by_name() -> None:
+async def test_in_memory_metrics_keys_sort_attributes_by_name() -> None:
     metrics = InMemoryMetrics()
 
-    metrics.increment("requests", 1, {"b": "2", "a": "1"})
-    metrics.observe("latency", 0.5, {"route": "/", "method": "GET"})
+    await metrics.increment("requests", 1, {"b": "2", "a": "1"})
+    await metrics.observe("latency", 0.5, {"route": "/", "method": "GET"})
 
     counters, observations = metrics.snapshot()
     assert counters == {"requests{a=1,b=2}": 1}
     assert observations == {"latency{method=GET,route=/}": (0.5,)}
 
 
-def test_in_memory_metrics_uses_the_bare_name_without_attributes() -> None:
+async def test_in_memory_metrics_uses_the_bare_name_without_attributes() -> None:
     metrics = InMemoryMetrics()
 
-    metrics.increment("requests")
-    metrics.increment("requests", 2, {})
-    metrics.increment("requests", 3, None)
+    await metrics.increment("requests")
+    await metrics.increment("requests", 2, {})
+    await metrics.increment("requests", 3, None)
 
     counters, _ = metrics.snapshot()
     assert counters == {"requests": 6}
 
 
-def test_in_memory_metrics_keeps_observations_in_order() -> None:
+async def test_in_memory_metrics_keeps_observations_in_order() -> None:
     metrics = InMemoryMetrics()
 
-    metrics.observe("latency", 0.5)
-    metrics.observe("latency", 1.5)
-    metrics.increment("latency")
+    await metrics.observe("latency", 0.5)
+    await metrics.observe("latency", 1.5)
+    await metrics.increment("latency")
 
     counters, observations = metrics.snapshot()
     assert observations == {"latency": (0.5, 1.5)}
     assert counters == {"latency": 1}
 
 
-def test_in_memory_metrics_snapshots_are_immutable_copies() -> None:
+async def test_in_memory_metrics_snapshots_are_immutable_copies() -> None:
     metrics = InMemoryMetrics()
-    metrics.increment("requests")
-    metrics.observe("latency", 0.5)
+    await metrics.increment("requests")
+    await metrics.observe("latency", 0.5)
 
     counters, observations = metrics.snapshot()
-    metrics.increment("requests")
-    metrics.observe("latency", 1.0)
+    await metrics.increment("requests")
+    await metrics.observe("latency", 1.0)
 
     assert counters == {"requests": 1}
     assert observations == {"latency": (0.5,)}
@@ -703,13 +713,16 @@ def test_in_memory_metrics_is_thread_safe() -> None:
     threads_count, iterations = 8, 2_000
     barrier = threading.Barrier(threads_count)
 
-    def work() -> None:
+    async def work() -> None:
         barrier.wait(timeout=5)
         for _ in range(iterations):
-            metrics.increment("requests", 1, {"worker": "any"})
-            metrics.observe("latency", 1.0)
+            await metrics.increment("requests", 1, {"worker": "any"})
+            await metrics.observe("latency", 1.0)
 
-    threads = [threading.Thread(target=work) for _ in range(threads_count)]
+    def run_work() -> None:
+        asyncio.run(work())
+
+    threads = [threading.Thread(target=run_work) for _ in range(threads_count)]
     for thread in threads:
         thread.start()
     for thread in threads:

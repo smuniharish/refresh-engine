@@ -1,9 +1,8 @@
-"""Interval scheduling and bridges for externally owned schedulers."""
+"""Interval scheduling on the running event loop."""
 
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import logging
 import math
 from collections.abc import Awaitable, Callable
@@ -14,14 +13,13 @@ from typing import Final, Self
 from refresh_engine._internal.values import number
 from refresh_engine.errors import SchedulerError
 from refresh_engine.events import (
+    AsyncEventPublisher,
     EventKind,
     EventPublisher,
-    EventPublisherABC,
     RefreshEvent,
 )
-from refresh_engine.models import RefreshRequest, RefreshResult, TriggerSource
 
-__all__ = ["AsyncScheduler", "ExternalSchedulerAdapter", "SchedulerState"]
+__all__ = ["AsyncScheduler", "SchedulerState"]
 
 _LOGGER: Final = logging.getLogger("refresh_engine")
 
@@ -83,7 +81,7 @@ class AsyncScheduler:
         callback: Callable[[], Awaitable[object]],
         interval: float,
         *,
-        events: EventPublisherABC | None = None,
+        events: EventPublisher | None = None,
         run_immediately: bool = False,
     ) -> None:
         """Create a stopped scheduler."""
@@ -91,7 +89,7 @@ class AsyncScheduler:
             raise TypeError("callback must be callable")
         self._callback = callback
         self._interval = number(interval, "interval", minimum=0, exclusive=True)
-        self._events = events if events is not None else EventPublisher()
+        self._events = events if events is not None else AsyncEventPublisher()
         self._run_immediately = run_immediately
         self._state = SchedulerState.STOPPED
         self._task: asyncio.Task[None] | None = None
@@ -254,115 +252,3 @@ class AsyncScheduler:
             self._events.publish(RefreshEvent(kind, attributes=attributes, error=error))
         except Exception:
             _LOGGER.exception("failed to publish %s event", kind.value)
-
-
-class ExternalSchedulerAdapter:
-    """Submit refresh requests from an externally owned scheduler.
-
-    Use [`run`][refresh_engine.ExternalSchedulerAdapter.run] from coroutines on the
-    engine's event loop, and
-    [`run_threadsafe`][refresh_engine.ExternalSchedulerAdapter.run_threadsafe] or
-    [`submit_threadsafe`][refresh_engine.ExternalSchedulerAdapter.submit_threadsafe]
-    from other threads, such as a thread-based job scheduler.
-
-    Args:
-        submit: Function that runs a request, typically `engine.submit`.
-        loop: Event loop that runs `submit`; defaults to the running loop.
-
-    Raises:
-        RuntimeError: If `loop` is omitted and no event loop is running.
-        TypeError: If `submit` is not callable.
-
-    Example:
-        ```python
-        adapter = ExternalSchedulerAdapter(engine.submit)
-        thread_scheduler.every(300, adapter.run_threadsafe)
-        ```
-    """
-
-    def __init__(
-        self,
-        submit: Callable[[RefreshRequest], Awaitable[RefreshResult]],
-        *,
-        loop: asyncio.AbstractEventLoop | None = None,
-    ) -> None:
-        """Create an adapter bound to an event loop."""
-        if not callable(submit):
-            raise TypeError("submit must be callable")
-        self._submit = submit
-        self._loop = loop if loop is not None else asyncio.get_running_loop()
-
-    async def run(self, request: RefreshRequest | None = None) -> RefreshResult:
-        """Run a request on the current event loop.
-
-        Args:
-            request: Request to run; defaults to an incremental refresh triggered by
-                `TriggerSource.EXTERNAL`.
-
-        Returns:
-            The refresh result.
-        """
-        return await self._submit(self._request(request))
-
-    def submit_threadsafe(
-        self, request: RefreshRequest | None = None
-    ) -> concurrent.futures.Future[RefreshResult]:
-        """Schedule a request on the adapter's loop from any thread.
-
-        Cancelling the returned future cancels the caller's wait for the refresh.
-
-        Args:
-            request: Request to run; defaults to an incremental refresh triggered by
-                `TriggerSource.EXTERNAL`.
-
-        Returns:
-            A future that resolves to the refresh result.
-        """
-        return asyncio.run_coroutine_threadsafe(
-            self._submit_coroutine(self._request(request)), self._loop
-        )
-
-    def run_threadsafe(
-        self,
-        request: RefreshRequest | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> RefreshResult:
-        """Run a request from another thread and block until it finishes.
-
-        Args:
-            request: Request to run; defaults to an incremental refresh triggered by
-                `TriggerSource.EXTERNAL`.
-            timeout: Seconds to wait; on expiry the wait is cancelled.
-
-        Returns:
-            The refresh result.
-
-        Raises:
-            RuntimeError: If called from the adapter's event loop thread, which
-                would deadlock.
-            TimeoutError: If the result is not available within `timeout`.
-        """
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            running = None
-        if running is self._loop:
-            raise RuntimeError(
-                "run_threadsafe() would block the event loop; use run() instead"
-            )
-        future = self.submit_threadsafe(request)
-        try:
-            return future.result(timeout)
-        except TimeoutError:
-            future.cancel()
-            raise
-
-    async def _submit_coroutine(self, request: RefreshRequest) -> RefreshResult:
-        return await self._submit(request)
-
-    @staticmethod
-    def _request(request: RefreshRequest | None) -> RefreshRequest:
-        if request is None:
-            return RefreshRequest(trigger=TriggerSource.EXTERNAL)
-        return request

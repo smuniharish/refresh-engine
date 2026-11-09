@@ -8,6 +8,7 @@ from time import perf_counter
 
 from tenacity import (
     AsyncRetrying,
+    RetryError,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential_jitter,
@@ -18,7 +19,7 @@ from refresh_engine._internal.context import RunContext, describe
 from refresh_engine._internal.observation import ObservationError, Observer, bounded
 from refresh_engine._internal.planning import Plan
 from refresh_engine._internal.values import utc_now
-from refresh_engine.contracts import RefreshOperation
+from refresh_engine.contracts import RefreshOperationLike
 from refresh_engine.errors import DependencyCycleError
 from refresh_engine.events import EventKind
 from refresh_engine.models import (
@@ -39,7 +40,7 @@ class Executor:
         self,
         context: RunContext,
         plan: Plan,
-        operation: RefreshOperation,
+        operation: RefreshOperationLike,
         config: RefreshConfig,
         observer: Observer,
     ) -> None:
@@ -50,13 +51,15 @@ class Executor:
         self._timeout = config.timeout.operation
         self._observer = observer
         retry = config.retry
-        self._retrying = (
-            None
-            if retry.max_attempts == 1
-            else AsyncRetrying(
+        if retry.retrying is not None:
+            self._retrying = retry.retrying.copy()
+        elif retry.max_attempts == 1:
+            self._retrying = None
+        else:
+            self._retrying = AsyncRetrying(
                 stop=stop_after_attempt(retry.max_attempts),
                 wait=wait_exponential_jitter(
-                    initial=retry.initial_delay,
+                    multiplier=retry.initial_delay,
                     max=retry.max_delay,
                     exp_base=retry.exponential_base,
                     jitter=retry.jitter,
@@ -64,7 +67,6 @@ class Executor:
                 retry=retry_if_exception_type(retry.retryable_exceptions),
                 reraise=True,
             )
-        )
         self._finished = 0
         self._in_flight = 0
 
@@ -231,13 +233,32 @@ class Executor:
                 return 1, error
             return 1, None
         attempts = 0
+        retrying = self._retrying.copy()
+        last_state = None
         try:
-            async for attempt in self._retrying.copy():
+            async for attempt in retrying:
+                last_state = attempt.retry_state
                 with attempt:
                     attempts = attempt.retry_state.attempt_number
                     await self._attempt(resource, snapshot, action)
+        except RetryError as error:
+            failure = error.last_attempt.exception()
+            return attempts, failure if isinstance(failure, Exception) else error
         except Exception as error:
             return attempts, error
+        if (
+            last_state is not None
+            and last_state.outcome is not None
+            and last_state.outcome.failed
+        ):
+            failure = last_state.outcome.exception()
+            if isinstance(failure, Exception):
+                return attempts, failure
+            if failure is None:
+                raise RuntimeError(  # pragma: no cover
+                    "tenacity reported a failed retry without an error"
+                )
+            raise failure
         return attempts, None
 
     async def _attempt(

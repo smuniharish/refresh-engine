@@ -1,0 +1,28 @@
+{
+  "skill_name": "refresh-engine",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We have an async inventory service and want to keep its search index current with refresh-engine. Show the integration route without guessing method signatures.",
+      "files": ["files/inventory/app.py"],
+      "expected_output": "A concise integration plan using the usage skill's application workflow, a ResourceSource ABC and async operation, with exact construction/signatures deferred to the installed package.",
+      "assertions": [
+        "Routes to the refresh-engine usage skill rather than custom extension implementation",
+        "Identifies ResourceSource as an ABC and permits a plain async operation function",
+        "Does not invent abstract method signatures or unsupported runtime behavior"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "How do I make engine.submit work from async code, pass a full retry policy, and export events through OpenTelemetry?",
+      "files": [],
+      "expected_output": "Directly awaits engine.submit, configures RetryConfig(retrying=AsyncRetrying(...)), and identifies the optional refresh-engine[otel] extra and refresh_engine.otel.OpenTelemetryEventHandler.",
+      "assertions": [
+        "Uses direct async await for engine.submit",
+        "Uses RetryConfig(retrying=AsyncRetrying(...)) as the complete user tenacity policy",
+        "Names the optional extra and handler accurately",
+        "Does not suggest a thread scheduler bridge"
+      ]
+    }
+  ]
+}

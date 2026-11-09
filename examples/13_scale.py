@@ -9,10 +9,11 @@ from refresh_engine import (
     RefreshRequest,
     Resource,
     ResourceSnapshot,
+    ResourceSource,
 )
 
 
-class Catalog:
+class Catalog(ResourceSource):
     """Products with a revision number that changes on every edit."""
 
     def __init__(self, size: int) -> None:

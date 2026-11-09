@@ -1,14 +1,13 @@
-"""Interval scheduling, and refreshes requested from a thread-based scheduler."""
+"""Interval scheduling and requests from an async external scheduler."""
 
 import asyncio
-import threading
 
 from common import DictionarySource, Recorder
 
 from refresh_engine import (
     AsyncScheduler,
-    ExternalSchedulerAdapter,
     RefreshEngine,
+    RefreshRequest,
     RefreshResult,
     TriggerSource,
 )
@@ -32,18 +31,9 @@ async def main() -> None:
             print(f"async scheduler:    state={scheduler.state}")
         print(f"after leaving:      state={scheduler.state}")
 
-        adapter = ExternalSchedulerAdapter(engine.submit)
-        results: list[RefreshResult] = []
-
-        def thread_job() -> None:
-            results.append(adapter.run_threadsafe(timeout=5))
-
-        thread = threading.Thread(target=thread_job)
-        thread.start()
-        await asyncio.to_thread(thread.join)
-        (result,) = results
+        result = await engine.submit(RefreshRequest(trigger=TriggerSource.EXTERNAL))
         print(
-            f"thread scheduler:   status={result.status}, "
+            f"external async job: status={result.status}, "
             f"trigger={result.request.trigger}"
         )
 

@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterator, Mapping
 from typing import Any, cast
 
 import pytest
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_none,
+)
 
 from refresh_engine import (
+    AsyncEventPublisher,
     DiscoveryResult,
     EventKind,
-    EventPublisher,
     FailurePolicy,
-    FingerprintStrategyABC,
+    FingerprintStrategy,
     InMemoryStateStore,
     PlanAction,
     PredicateSelector,
@@ -26,12 +33,12 @@ from refresh_engine import (
     ResourceSnapshot,
     ResourceState,
     RetryConfig,
-    StateStoreABC,
+    StateStore,
     StateStoreError,
-    StateTransactionABC,
+    StateTransaction,
     TimeoutConfig,
 )
-from refresh_engine.events import EventPublisherABC
+from refresh_engine.events import EventPublisher
 from tests.support import EventRecorder, FakeSource, RecordingOperation
 
 
@@ -43,10 +50,10 @@ class FailingCommitStore(InMemoryStateStore):
         self.rollbacks = 0
         self.rollback_error = rollback_error
 
-    def transaction(self) -> StateTransactionABC:
+    async def transaction(self) -> StateTransaction:
         store = self
 
-        class Transaction(StateTransactionABC):
+        class Transaction(StateTransaction):
             async def apply_changes(
                 self,
                 puts: Mapping[str, ResourceState],
@@ -60,6 +67,33 @@ class FailingCommitStore(InMemoryStateStore):
                 await super().rollback()
                 if store.rollback_error is not None:
                     raise store.rollback_error
+
+        return Transaction()
+
+
+class InvalidTransactionStore(InMemoryStateStore):
+    async def transaction(self) -> StateTransaction:
+        return cast(Any, object())
+
+
+class TransactionAcquisitionFailureStore(InMemoryStateStore):
+    async def transaction(self) -> StateTransaction:
+        raise StateStoreError("connection failed")
+
+
+class CancelledRollbackStore(InMemoryStateStore):
+    async def transaction(self) -> StateTransaction:
+        class Transaction(StateTransaction):
+            async def apply_changes(
+                self,
+                puts: Mapping[str, ResourceState],
+                deletes: Any,
+                /,
+            ) -> None:
+                raise StateStoreError("commit failed")
+
+            async def rollback(self) -> None:
+                raise asyncio.CancelledError
 
         return Transaction()
 
@@ -147,11 +181,11 @@ async def test_discovery_diagnostics_become_warnings() -> None:
 
 
 async def test_state_load_failure_fails_the_refresh() -> None:
-    class BrokenStore(StateStoreABC):
+    class BrokenStore(StateStore):
         async def load_all(self) -> Mapping[str, ResourceState]:
             raise StateStoreError("database offline")
 
-        def transaction(self) -> StateTransactionABC:
+        async def transaction(self) -> StateTransaction:
             raise AssertionError("unreachable")
 
     async with RefreshEngine(
@@ -166,7 +200,7 @@ async def test_state_load_failure_fails_the_refresh() -> None:
 
 async def test_snapshot_failure_keeps_previous_state_and_other_resources() -> None:
     source = FakeSource({"a": 1, "b": 1})
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     async with RefreshEngine(source, RecordingOperation(), events=events) as engine:
@@ -254,7 +288,7 @@ async def test_snapshot_contract_violations_are_reported(
 async def test_fingerprint_failures_are_reported(
     outcome: object, message: str, exception_type: str
 ) -> None:
-    class BrokenStrategy(FingerprintStrategyABC):
+    class BrokenStrategy(FingerprintStrategy):
         async def fingerprint(
             self, snapshot: ResourceSnapshot, /
         ) -> ResourceFingerprint:
@@ -339,6 +373,63 @@ async def test_operation_failing_every_attempt_reports_the_attempt_count() -> No
     assert result.errors[0].message == "down"
 
 
+async def test_custom_retry_policy_exhaustion_preserves_operation_failure() -> None:
+    operation = RecordingOperation(failures={"a": OSError("down")})
+    policy = AsyncRetrying(
+        stop=stop_after_attempt(2),
+        wait=wait_none(),
+        retry=retry_if_exception_type(OSError),
+    )
+    config = RefreshConfig(retry=RetryConfig(retrying=policy))
+    async with RefreshEngine(FakeSource({"a": 1}), operation, config=config) as engine:
+        result = await engine.refresh()
+
+    assert result.executions[0].attempts == 2
+    assert result.errors[0].message == "down"
+
+
+async def test_custom_retry_callback_cannot_turn_failure_into_success() -> None:
+    operation = RecordingOperation(failures={"a": OSError("down")})
+    policy = AsyncRetrying(
+        stop=stop_after_attempt(2),
+        wait=wait_none(),
+        retry=retry_if_exception_type(OSError),
+        retry_error_callback=lambda _: None,
+    )
+    config = RefreshConfig(retry=RetryConfig(retrying=policy))
+    async with RefreshEngine(FakeSource({"a": 1}), operation, config=config) as engine:
+        result = await engine.refresh()
+
+    assert result.status is RefreshStatus.FAILED
+    assert result.executions[0].attempts == 2
+    assert result.errors[0].message == "down"
+
+
+async def test_custom_retry_policy_preserves_base_exception() -> None:
+    class OperationAbort(BaseException):
+        pass
+
+    async def abort(
+        resource: Resource,
+        snapshot: ResourceSnapshot | None,
+        action: PlanAction,
+        request: Any,
+        /,
+    ) -> None:
+        raise OperationAbort("stop")
+
+    policy = AsyncRetrying(
+        stop=stop_after_attempt(1),
+        wait=wait_none(),
+        retry=retry_if_exception_type(BaseException),
+        retry_error_callback=lambda _: None,
+    )
+    config = RefreshConfig(retry=RetryConfig(retrying=policy))
+    async with RefreshEngine(FakeSource({"a": 1}), abort, config=config) as engine:
+        with pytest.raises(OperationAbort, match="stop"):
+            await engine.refresh()
+
+
 async def test_non_retryable_errors_are_not_retried() -> None:
     operation = RecordingOperation(failures={"a": ValueError("invalid")})
     retry = RetryConfig(
@@ -357,7 +448,7 @@ async def test_dependents_of_a_failed_operation_are_skipped() -> None:
         {"a": 1, "b": 1, "c": 1, "x": 1}, dependencies={"b": {"a"}, "c": {"b"}}
     )
     operation = RecordingOperation(failures={"a": RuntimeError("boom")})
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     async with RefreshEngine(source, operation, events=events) as engine:
@@ -485,6 +576,83 @@ async def test_rollback_errors_after_a_failed_commit_are_suppressed() -> None:
     assert store.rollbacks == 1
 
 
+async def test_cancellation_during_rollback_propagates() -> None:
+    engine = RefreshEngine(
+        FakeSource({"a": 1}),
+        RecordingOperation(),
+        store=CancelledRollbackStore(),
+    )
+
+    result = await engine.refresh()
+
+    assert result.status is RefreshStatus.CANCELLED
+    await engine.close()
+
+
+async def test_cancelled_rollback_during_commit_cancellation_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.ERROR, logger="refresh_engine")
+    committing = asyncio.Event()
+
+    class Store(InMemoryStateStore):
+        async def transaction(self) -> StateTransaction:
+            class Transaction(StateTransaction):
+                async def apply_changes(
+                    self,
+                    puts: Mapping[str, ResourceState],
+                    deletes: Any,
+                    /,
+                ) -> None:
+                    committing.set()
+                    await asyncio.Event().wait()
+
+                async def rollback(self) -> None:
+                    raise asyncio.CancelledError
+
+            return Transaction()
+
+    engine = RefreshEngine(FakeSource({"a": 1}), RecordingOperation(), store=Store())
+    task = asyncio.create_task(engine.refresh())
+    await asyncio.wait_for(committing.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await engine.close()
+
+    assert "rollback was cancelled after persistence was already cancelled" in (
+        caplog.text
+    )
+
+
+@pytest.mark.parametrize(
+    ("store", "message"),
+    [
+        (
+            InvalidTransactionStore(),
+            (
+                "failed to commit state: "
+                "store.transaction() must return a StateTransaction"
+            ),
+        ),
+        (
+            TransactionAcquisitionFailureStore(),
+            "failed to commit state: connection failed",
+        ),
+    ],
+)
+async def test_invalid_or_failed_transaction_acquisition_fails_refresh(
+    store: InMemoryStateStore, message: str
+) -> None:
+    async with RefreshEngine(
+        FakeSource({"a": 1}), RecordingOperation(), store=store
+    ) as engine:
+        result = await engine.refresh()
+
+    assert result.status is RefreshStatus.FAILED
+    assert result.errors[0].message == message
+
+
 async def test_selector_failure_fails_the_refresh() -> None:
     def explode(resource: Resource) -> bool:
         raise KeyError("tags")
@@ -545,7 +713,7 @@ async def test_foreign_timeout_errors_are_not_the_overall_timeout() -> None:
 async def test_a_failing_event_publisher_never_breaks_a_refresh(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    class BrokenPublisher(EventPublisherABC):
+    class BrokenPublisher(EventPublisher):
         def subscribe(self, handler: Any) -> None: ...
 
         def unsubscribe(self, handler: Any) -> None: ...
@@ -598,8 +766,8 @@ async def test_cancellation_during_commit_rolls_back_and_propagates() -> None:
     rolled_back: list[bool] = []
 
     class SlowStore(InMemoryStateStore):
-        def transaction(self) -> StateTransactionABC:
-            class Transaction(StateTransactionABC):
+        async def transaction(self) -> StateTransaction:
+            class Transaction(StateTransaction):
                 async def apply_changes(
                     self, puts: Mapping[str, ResourceState], deletes: Any, /
                 ) -> None:

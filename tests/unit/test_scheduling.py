@@ -1,35 +1,27 @@
-"""Tests for `AsyncScheduler` and `ExternalSchedulerAdapter`."""
+"""Tests for `AsyncScheduler`."""
 
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import logging
 import math
 import re
-import threading
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 import pytest
 
 from refresh_engine import (
+    AsyncEventPublisher,
     AsyncScheduler,
     ConfigurationError,
-    EventHandler,
+    EventHandlerLike,
     EventKind,
     EventPublisher,
-    EventPublisherABC,
-    ExternalSchedulerAdapter,
     RefreshEvent,
-    RefreshMode,
-    RefreshRequest,
-    RefreshResult,
-    RefreshStatus,
     SchedulerError,
     SchedulerState,
-    TriggerSource,
 )
 from tests.support import EventRecorder
 
@@ -94,15 +86,17 @@ class BlockingRun:
         self.done.set()
 
 
-class SchedulerFactory(Protocol):
+class SchedulerFactory(ABC):
+    @abstractmethod
     def __call__(
         self,
         callback: Callable[[], Awaitable[object]],
         interval: float = INTERVAL,
         *,
-        events: EventPublisherABC | None = None,
+        events: EventPublisher | None = None,
         run_immediately: bool = False,
-    ) -> AsyncScheduler: ...
+    ) -> AsyncScheduler:
+        raise NotImplementedError
 
 
 @pytest.fixture
@@ -110,32 +104,34 @@ async def make_scheduler() -> AsyncIterator[SchedulerFactory]:
     """Create schedulers that are always stopped when the test ends."""
     created: list[AsyncScheduler] = []
 
-    def make(
-        callback: Callable[[], Awaitable[object]],
-        interval: float = INTERVAL,
-        *,
-        events: EventPublisherABC | None = None,
-        run_immediately: bool = False,
-    ) -> AsyncScheduler:
-        scheduler = AsyncScheduler(
-            callback, interval, events=events, run_immediately=run_immediately
-        )
-        created.append(scheduler)
-        return scheduler
+    class Factory(SchedulerFactory):
+        def __call__(
+            self,
+            callback: Callable[[], Awaitable[object]],
+            interval: float = INTERVAL,
+            *,
+            events: EventPublisher | None = None,
+            run_immediately: bool = False,
+        ) -> AsyncScheduler:
+            scheduler = AsyncScheduler(
+                callback, interval, events=events, run_immediately=run_immediately
+            )
+            created.append(scheduler)
+            return scheduler
 
-    yield make
+    yield Factory()
     for scheduler in created:
         await scheduler.stop(cancel=True)
 
 
-def recording_publisher() -> tuple[EventPublisher, EventRecorder]:
-    publisher = EventPublisher()
+def recording_publisher() -> tuple[AsyncEventPublisher, EventRecorder]:
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     publisher.subscribe(recorder)
     return publisher, recorder
 
 
-class ListPublisher(EventPublisherABC):
+class ListPublisher(EventPublisher):
     """Collects published events synchronously; `has_subscribers` is configurable."""
 
     def __init__(self, *, subscribed: bool) -> None:
@@ -146,10 +142,10 @@ class ListPublisher(EventPublisherABC):
     def has_subscribers(self) -> bool:
         return self.subscribed
 
-    def subscribe(self, handler: EventHandler) -> None:
+    def subscribe(self, handler: EventHandlerLike) -> None:
         return None
 
-    def unsubscribe(self, handler: EventHandler) -> None:
+    def unsubscribe(self, handler: EventHandlerLike) -> None:
         return None
 
     def publish(self, event: RefreshEvent) -> None:
@@ -744,183 +740,3 @@ async def test_a_failing_event_publisher_does_not_break_the_scheduler(
     assert scheduler.state is SchedulerState.STOPPED
     assert "failed to publish scheduler_started event" in caplog.text
     assert "failed to publish scheduler_stopped event" in caplog.text
-
-
-# ExternalSchedulerAdapter
-
-
-def make_result(request: RefreshRequest) -> RefreshResult:
-    now = datetime.now(UTC)
-    return RefreshResult(
-        refresh_id="refresh-1",
-        request=request,
-        status=RefreshStatus.SUCCESS,
-        started_at=now,
-        completed_at=now,
-        duration=0.0,
-    )
-
-
-class FakeSubmit:
-    """Records submitted requests and the thread that ran them."""
-
-    def __init__(self) -> None:
-        self.requests: list[RefreshRequest] = []
-        self.threads: list[int] = []
-
-    async def __call__(self, request: RefreshRequest) -> RefreshResult:
-        self.requests.append(request)
-        self.threads.append(threading.get_ident())
-        await asyncio.sleep(0)
-        return make_result(request)
-
-
-async def test_adapter_requires_a_callable_submit() -> None:
-    with pytest.raises(TypeError, match=exactly("submit must be callable")):
-        ExternalSchedulerAdapter(cast(Any, "engine.submit"))
-
-
-def test_adapter_requires_a_running_loop_when_no_loop_is_given() -> None:
-    with pytest.raises(RuntimeError, match="no running event loop"):
-        ExternalSchedulerAdapter(FakeSubmit())
-
-
-async def test_run_submits_an_external_incremental_request_by_default() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-
-    result = await adapter.run()
-
-    (request,) = submit.requests
-    assert request.trigger is TriggerSource.EXTERNAL
-    assert request.mode is RefreshMode.INCREMENTAL
-    assert result.request is request
-
-
-async def test_run_passes_an_explicit_request_through_unchanged() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-    request = RefreshRequest(mode=RefreshMode.FULL, trigger=TriggerSource.EVENT)
-
-    result = await adapter.run(request)
-
-    assert submit.requests == [request]
-    assert submit.requests[0] is request
-    assert result.request is request
-
-
-async def test_submit_threadsafe_runs_the_request_on_the_adapter_loop() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-    request = RefreshRequest(mode=RefreshMode.FULL)
-
-    future = await asyncio.to_thread(adapter.submit_threadsafe, request)
-    result = await bounded(asyncio.wrap_future(future))
-
-    assert isinstance(future, concurrent.futures.Future)
-    assert result.request is request
-    assert submit.threads == [threading.get_ident()]
-
-
-async def test_submit_threadsafe_uses_the_default_request() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-
-    future = await asyncio.to_thread(adapter.submit_threadsafe)
-    result = await bounded(asyncio.wrap_future(future))
-
-    assert result.request.trigger is TriggerSource.EXTERNAL
-    assert result.request.mode is RefreshMode.INCREMENTAL
-
-
-async def test_run_threadsafe_returns_the_result_to_another_thread() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-
-    result = await bounded(asyncio.to_thread(adapter.run_threadsafe, timeout=TIMEOUT))
-
-    (request,) = submit.requests
-    assert result.request is request
-    assert request.trigger is TriggerSource.EXTERNAL
-    assert submit.threads == [threading.get_ident()]
-
-
-async def test_run_threadsafe_passes_an_explicit_request_through() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-    request = RefreshRequest(trigger=TriggerSource.SCHEDULED)
-
-    result = await bounded(asyncio.to_thread(adapter.run_threadsafe, request))
-
-    assert result.request is request
-
-
-async def test_run_threadsafe_refuses_to_block_the_adapter_loop() -> None:
-    submit = FakeSubmit()
-    adapter = ExternalSchedulerAdapter(submit)
-
-    with pytest.raises(
-        RuntimeError,
-        match=exactly("run_threadsafe() would block the event loop; use run() instead"),
-    ):
-        adapter.run_threadsafe()
-    await let_other_tasks_run()
-
-    assert submit.requests == []
-
-
-async def test_run_threadsafe_timeout_cancels_the_submitted_coroutine(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = threading.Event()
-    cancelled = asyncio.Event()
-    never = asyncio.Event()
-
-    async def submit(request: RefreshRequest) -> RefreshResult:
-        started.set()
-        try:
-            await never.wait()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
-        return make_result(request)
-
-    adapter = ExternalSchedulerAdapter(submit)
-    submit_threadsafe = adapter.submit_threadsafe
-    futures: list[concurrent.futures.Future[RefreshResult]] = []
-
-    def submit_once_running(
-        request: RefreshRequest | None = None,
-    ) -> concurrent.futures.Future[RefreshResult]:
-        # Hand the future back only once the coroutine runs, so the timeout always
-        # expires while the submission is in flight.
-        future = submit_threadsafe(request)
-        futures.append(future)
-        assert started.wait(timeout=TIMEOUT)
-        return future
-
-    monkeypatch.setattr(adapter, "submit_threadsafe", submit_once_running)
-
-    with pytest.raises(TimeoutError):
-        await asyncio.to_thread(adapter.run_threadsafe, timeout=0.01)
-
-    await bounded(cancelled.wait())
-    assert futures[0].cancelled()
-
-
-def test_adapter_bound_to_an_explicit_loop_runs_requests_on_that_loop() -> None:
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    try:
-        submit = FakeSubmit()
-        adapter = ExternalSchedulerAdapter(submit, loop=loop)
-
-        result = adapter.run_threadsafe(timeout=TIMEOUT)
-
-        assert result.request.trigger is TriggerSource.EXTERNAL
-        assert submit.threads == [thread.ident]
-    finally:
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(timeout=TIMEOUT)
-        loop.close()

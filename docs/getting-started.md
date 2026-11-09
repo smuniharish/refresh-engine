@@ -30,12 +30,12 @@ A source implements two coroutines. `discover()` lists the resources cheaply and
 reports whether the listing is complete. `snapshot()` reads one resource in full.
 
 ```python
-from refresh_engine import DiscoveryResult, Resource, ResourceSnapshot
+from refresh_engine import DiscoveryResult, Resource, ResourceSnapshot, ResourceSource
 
 CATALOG = {"apples": 120, "pears": 80}
 
 
-class InventorySource:
+class InventorySource(ResourceSource):
     async def discover(self) -> DiscoveryResult:
         return DiscoveryResult(Resource(item) for item in sorted(CATALOG))
 
@@ -79,6 +79,7 @@ from refresh_engine import (
     DiscoveryResult,
     PlanAction,
     RefreshEngine,
+    ResourceSource,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
@@ -88,7 +89,7 @@ CATALOG = {"apples": 120, "pears": 80}
 SEARCH_INDEX: dict[str, int] = {}
 
 
-class InventorySource:
+class InventorySource(ResourceSource):
     async def discover(self) -> DiscoveryResult:
         return DiscoveryResult(Resource(item) for item in sorted(CATALOG))
 

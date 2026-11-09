@@ -13,6 +13,8 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
 
+from tenacity import AsyncRetrying
+
 from refresh_engine._internal.values import (
     freeze_mapping,
     id_set,
@@ -372,10 +374,10 @@ class RefreshRequest:
         )
         object.__setattr__(self, "metadata", freeze_mapping(self.metadata))
         optional_text(self.correlation_id, "correlation_id")
-        if self.selector is not None and not callable(
-            getattr(self.selector, "matches", None)
+        if self.selector is not None and not isinstance(
+            self.selector, ResourceSelector
         ):
-            raise ConfigurationError("selector must provide a matches() method")
+            raise ConfigurationError("selector must subclass ResourceSelector")
         selects = bool(self.resource_ids) or self.selector is not None
         if mode is RefreshMode.TARGETED and not selects:
             raise ConfigurationError(
@@ -495,6 +497,7 @@ class RetryConfig:
         exponential_base: Growth factor applied to each subsequent delay.
         jitter: Maximum random seconds added to each delay.
         retryable_exceptions: Exception types that trigger a retry.
+        retrying: Optional tenacity policy that replaces the fields above.
 
     Raises:
         ConfigurationError: If a value is out of range.
@@ -506,6 +509,7 @@ class RetryConfig:
     exponential_base: float = 2.0
     jitter: float = 0.0
     retryable_exceptions: tuple[type[Exception], ...] = (Exception,)
+    retrying: AsyncRetrying | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         """Validate the policy."""
@@ -526,6 +530,8 @@ class RetryConfig:
                 "retryable_exceptions must contain Exception subclasses"
             )
         object.__setattr__(self, "retryable_exceptions", exceptions)
+        if self.retrying is not None and not isinstance(self.retrying, AsyncRetrying):
+            raise ConfigurationError("retrying must be a tenacity AsyncRetrying")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

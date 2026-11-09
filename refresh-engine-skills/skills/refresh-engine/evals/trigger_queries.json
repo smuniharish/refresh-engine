@@ -1,0 +1,25 @@
+{
+  "skill_name": "refresh-engine",
+  "queries": [
+    {"query": "keep our product catalog search index current with refresh-engine", "should_trigger": true, "split": "train"},
+    {"query": "how do I submit refresh work from an async FastAPI handler?", "should_trigger": true, "split": "train"},
+    {"query": "use RetryConfig with our complete tenacity AsyncRetrying policy", "should_trigger": true, "split": "train"},
+    {"query": "install the refresh-engine optional OpenTelemetry event handler", "should_trigger": true, "split": "train"},
+    {"query": "our async event handler needs the queued refresh publisher", "should_trigger": true, "split": "train"},
+    {"query": "connect an async resource source and operation to refresh-engine", "should_trigger": true, "split": "train"},
+    {"query": "refresh_engine.otel.OpenTelemetryEventHandler is missing after install", "should_trigger": true, "split": "validation"},
+    {"query": "what is the direct async engine.submit pattern?", "should_trigger": true, "split": "validation"},
+    {"query": "keep embeddings refreshed from an async source using refresh-engine", "should_trigger": true, "split": "validation"},
+    {"query": "wire refresh-engine events into an async event handler", "should_trigger": true, "split": "validation"},
+    {"query": "implement a custom StateStore for refresh-engine and pass its contract", "should_trigger": false, "split": "train"},
+    {"query": "write a custom ResourceSelector ABC for refresh-engine", "should_trigger": false, "split": "train"},
+    {"query": "build an async SQL database adapter for refresh-engine state", "should_trigger": false, "split": "train"},
+    {"query": "create a custom FingerprintStrategy subclass", "should_trigger": false, "split": "train"},
+    {"query": "write a MetricsSink implementation for my refresh-engine integration", "should_trigger": false, "split": "train"},
+    {"query": "my custom refresh-engine StateTransaction needs tests", "should_trigger": false, "split": "train"},
+    {"query": "implement a custom EventPublisher or EventHandler ABC integration", "should_trigger": false, "split": "validation"},
+    {"query": "create a new ResourceSource extension and tests for it", "should_trigger": false, "split": "validation"},
+    {"query": "add a refresh-engine StateStoreContract test for a new backend", "should_trigger": false, "split": "validation"},
+    {"query": "create an extension package for custom refresh-engine retry and telemetry components", "should_trigger": false, "split": "validation"}
+  ]
+}

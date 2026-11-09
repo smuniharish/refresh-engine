@@ -5,14 +5,17 @@ from typing import Any, cast
 import pytest
 
 from refresh_engine import (
+    AsyncEventPublisher,
     CompositeHash,
     ConfigurationError,
     ContentHash,
-    EventPublisher,
+    DiscoveryResult,
     InMemoryStateStore,
     RefreshConfig,
     RefreshEngine,
     RefreshMode,
+    Resource,
+    ResourceSnapshot,
     TagSelector,
     TriggerSource,
 )
@@ -28,7 +31,7 @@ def test_engine_uses_documented_defaults() -> None:
     assert isinstance(engine.fingerprint, CompositeHash)
     assert isinstance(engine.store, InMemoryStateStore)
     assert engine.config == RefreshConfig()
-    assert isinstance(engine.events, EventPublisher)
+    assert isinstance(engine.events, AsyncEventPublisher)
     assert not engine.closed
 
 
@@ -40,7 +43,7 @@ def test_engine_keeps_injected_components_even_when_falsy() -> None:
     store = EmptyStore()
     fingerprint = ContentHash()
     config = RefreshConfig(max_concurrency=2)
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     engine = RefreshEngine(
         FakeSource({}),
         RecordingOperation(),
@@ -56,15 +59,41 @@ def test_engine_keeps_injected_components_even_when_falsy() -> None:
     assert engine.events is events
 
 
+class DuckTypedComponents:
+    async def discover(self) -> DiscoveryResult:
+        return DiscoveryResult([])
+
+    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
+        return ResourceSnapshot(resource.resource_id)
+
+    async def __call__(self, *args: object) -> None:
+        return None
+
+    async def fingerprint(self, snapshot: ResourceSnapshot, /) -> object:
+        return object()
+
+    async def load_all(self) -> dict[str, object]:
+        return {}
+
+    async def transaction(self) -> object:
+        return object()
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
-        ({"source": object()}, "source must provide discover"),
-        ({"operation": object()}, "operation must be callable"),
-        ({"fingerprint": object()}, "fingerprint must provide fingerprint"),
-        ({"store": object()}, "store must provide load_all"),
+        ({"source": DuckTypedComponents()}, "source must subclass ResourceSource"),
+        (
+            {"operation": DuckTypedComponents()},
+            "operation must subclass RefreshOperation or be an async function",
+        ),
+        (
+            {"fingerprint": DuckTypedComponents()},
+            "fingerprint must subclass FingerprintStrategy",
+        ),
+        ({"store": DuckTypedComponents()}, "store must subclass StateStore"),
         ({"config": object()}, "config must be a RefreshConfig"),
-        ({"events": object()}, "events must be an EventPublisherABC"),
+        ({"events": object()}, "events must be an EventPublisher"),
     ],
 )
 def test_engine_rejects_components_that_violate_their_contract(
@@ -79,6 +108,15 @@ def test_engine_rejects_components_that_violate_their_contract(
     operation = values.pop("operation")
     with pytest.raises(TypeError, match=message):
         RefreshEngine(source, operation, **values)
+
+
+def test_engine_accepts_a_plain_async_operation_function() -> None:
+    async def operation(*args: object) -> None:
+        return None
+
+    engine = RefreshEngine(FakeSource({}), operation)
+
+    assert engine.operation is operation
 
 
 async def test_refresh_infers_the_mode_from_its_arguments() -> None:

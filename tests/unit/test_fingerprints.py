@@ -25,7 +25,6 @@ from refresh_engine import (
     ETagFingerprint,
     FingerprintError,
     FingerprintStrategy,
-    FingerprintStrategyABC,
     MetadataHash,
     ResourceFingerprint,
     ResourceSnapshot,
@@ -467,7 +466,7 @@ SNAPSHOT = ResourceSnapshot(
     dependencies={"beta"},
 )
 
-STRATEGIES: list[FingerprintStrategyABC] = [
+STRATEGIES: list[FingerprintStrategy] = [
     CompositeHash(),
     ContentHash(),
     MetadataHash(),
@@ -480,9 +479,9 @@ STRATEGIES: list[FingerprintStrategyABC] = [
     "strategy", STRATEGIES, ids=lambda strategy: type(strategy).__name__
 )
 def test_strategies_implement_both_fingerprint_contracts(
-    strategy: FingerprintStrategyABC,
+    strategy: FingerprintStrategy,
 ) -> None:
-    assert isinstance(strategy, FingerprintStrategyABC)
+    assert isinstance(strategy, FingerprintStrategy)
     assert isinstance(strategy, FingerprintStrategy)
 
 
@@ -498,7 +497,7 @@ def test_strategies_implement_both_fingerprint_contracts(
     ids=lambda value: type(value).__name__ if not isinstance(value, str) else value,
 )
 async def test_strategies_name_their_algorithm(
-    strategy: FingerprintStrategyABC, algorithm: str
+    strategy: FingerprintStrategy, algorithm: str
 ) -> None:
     fingerprint = await strategy.fingerprint(SNAPSHOT)
 
@@ -508,7 +507,7 @@ async def test_strategies_name_their_algorithm(
 @pytest.mark.parametrize(
     "strategy", STRATEGIES, ids=lambda strategy: type(strategy).__name__
 )
-async def test_strategies_are_deterministic(strategy: FingerprintStrategyABC) -> None:
+async def test_strategies_are_deterministic(strategy: FingerprintStrategy) -> None:
     copy = dataclasses.replace(SNAPSHOT, content={"body": [1, 2], "title": "Hello"})
 
     assert await strategy.fingerprint(SNAPSHOT) == await strategy.fingerprint(copy)

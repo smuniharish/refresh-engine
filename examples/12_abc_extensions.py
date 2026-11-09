@@ -8,18 +8,18 @@ from refresh_engine import (
     DiscoveryResult,
     PlanAction,
     RefreshEngine,
-    RefreshOperationABC,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
-    ResourceSourceABC,
+    ResourceSource,
     ResourceState,
-    StateStoreABC,
-    StateTransactionABC,
+    StateStore,
+    StateTransaction,
 )
 
 
-class FeatureFlags(ResourceSourceABC):
+class FeatureFlags(ResourceSource):
     """Feature flags read from a remote configuration service."""
 
     def __init__(self) -> None:
@@ -34,7 +34,7 @@ class FeatureFlags(ResourceSourceABC):
         )
 
 
-class EdgeCache(RefreshOperationABC):
+class EdgeCache(RefreshOperation):
     """Push each flag to an edge cache."""
 
     def __init__(self) -> None:
@@ -54,7 +54,7 @@ class EdgeCache(RefreshOperationABC):
             self.cache[resource.resource_id] = snapshot.content
 
 
-class AuditedStore(StateStoreABC):
+class AuditedStore(StateStore):
     """Keep state in memory and count committed changes."""
 
     def __init__(self) -> None:
@@ -64,11 +64,11 @@ class AuditedStore(StateStoreABC):
     async def load_all(self) -> Mapping[str, ResourceState]:
         return dict(self.states)
 
-    def transaction(self) -> StateTransactionABC:
+    async def transaction(self) -> StateTransaction:
         return AuditedTransaction(self)
 
 
-class AuditedTransaction(StateTransactionABC):
+class AuditedTransaction(StateTransaction):
     def __init__(self, store: AuditedStore) -> None:
         super().__init__()
         self.store = store

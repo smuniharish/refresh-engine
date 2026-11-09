@@ -1,7 +1,7 @@
 """Validate the built distributions and smoke-test the wheel in clean environments.
 
 Usage:
-    python scripts/validate_distribution.py dist --python 3.12 --python 3.14
+    python scripts/validate_distribution.py dist --python 3.12 --python 3.15
 """
 
 from __future__ import annotations
@@ -22,17 +22,31 @@ from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_DEPENDENCIES = {"structlog", "tenacity"}
-DEVELOPMENT_PREFIXES = ("tests/", "examples/", "scripts/", "docs/", "benchmarks/")
+DEVELOPMENT_DIRECTORIES = {
+    ".github",
+    "benchmarks",
+    "docs",
+    "examples",
+    "refresh-engine-skills",
+    "scripts",
+    "tests",
+}
 
 SMOKE_TEST = """
 import asyncio
 import sys
 
 import refresh_engine
-from refresh_engine import DiscoveryResult, RefreshEngine, Resource, ResourceSnapshot
+from refresh_engine import (
+    DiscoveryResult,
+    RefreshEngine,
+    Resource,
+    ResourceSnapshot,
+    ResourceSource,
+)
 
 
-class Source:
+class Source(ResourceSource):
     async def discover(self):
         return DiscoveryResult([Resource("smoke")])
 
@@ -61,11 +75,8 @@ def fail(message: str) -> NoReturn:
 
 
 def project_version() -> str:
-    source = (ROOT / "src" / "refresh_engine" / "__init__.py").read_text("utf-8")
-    match = re.search(r'^__version__ = "([^"]+)"$', source, re.MULTILINE)
-    if match is None:
-        fail("cannot find __version__ in src/refresh_engine/__init__.py")
-    return match.group(1)
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"]
+    return project["version"]
 
 
 def requirement_name(requirement: str) -> str:
@@ -86,7 +97,7 @@ def validate_wheel(wheel: Path, version: str, requires_python: str) -> None:
         metadata = email.message_from_bytes(archive.read(metadata_files[0]))
     if "refresh_engine/py.typed" not in names:
         fail("the wheel does not contain the py.typed marker")
-    if any(name.startswith(DEVELOPMENT_PREFIXES) for name in names):
+    if any(DEVELOPMENT_DIRECTORIES.intersection(name.split("/")) for name in names):
         fail("the wheel contains development-only files")
     if not any(name.endswith(".dist-info/licenses/LICENSE") for name in names):
         fail("the wheel does not contain the license file")
@@ -123,6 +134,8 @@ def validate_metadata(
         fail(f"project URLs are incomplete: {sorted(urls)}")
     if "Typing :: Typed" not in metadata.get_all("Classifier", []):
         fail("the Typing :: Typed classifier is missing")
+    if "otel" not in metadata.get_all("Provides-Extra", []):
+        fail("the optional otel extra is missing")
 
 
 def validate_sdist(sdist: Path) -> None:
@@ -131,11 +144,9 @@ def validate_sdist(sdist: Path) -> None:
     required = {
         "LICENSE",
         "README.md",
-        "CHANGELOG.md",
         "pyproject.toml",
         "src/refresh_engine/__init__.py",
         "src/refresh_engine/py.typed",
-        "tests/conftest.py",
     }
     missing = required - set(names)
     if missing:

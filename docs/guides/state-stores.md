@@ -32,8 +32,8 @@ refresh after a restart treats every resource as added.
 
 To keep state across restarts, implement
 [`StateStore`][refresh_engine.StateStore] on top of your database. The simplest way
-is to subclass [`StateStoreABC`][refresh_engine.StateStoreABC] and
-[`StateTransactionABC`][refresh_engine.StateTransactionABC]. The transaction base
+is to subclass [`StateStore`][refresh_engine.StateStore] and
+[`StateTransaction`][refresh_engine.StateTransaction]. The transaction base
 class stages `put` and `delete` calls in memory and hands them to a single method,
 `apply_changes`, which you implement atomically:
 
@@ -41,21 +41,21 @@ class stages `put` and `delete` calls in memory and hands them to a single metho
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 
-from refresh_engine import ResourceState, StateStoreABC, StateTransactionABC
+from refresh_engine import ResourceState, StateStore, StateTransaction
 
 
-class DatabaseStore(StateStoreABC):
+class DatabaseStore(StateStore):
     def __init__(self, database: Database) -> None:
         self.database = database
 
     async def load_all(self) -> Mapping[str, ResourceState]:
         return {state.resource_id: state for state in await self.database.states()}
 
-    def transaction(self) -> StateTransactionABC:
+    async def transaction(self) -> StateTransaction:
         return DatabaseTransaction(self.database)
 
 
-class DatabaseTransaction(StateTransactionABC):
+class DatabaseTransaction(StateTransaction):
     def __init__(self, database: Database) -> None:
         super().__init__()
         self.database = database
@@ -82,6 +82,34 @@ Rules for a correct store:
   them unchanged from `load_all()`.
 - **Keep the event loop free.** Use an asynchronous driver, or run blocking calls
   with `asyncio.to_thread`.
+
+`StateStore.transaction()` is asynchronous. Await it before using the returned
+transaction, including in an asynchronous context manager:
+
+```python
+async with await store.transaction() as transaction:
+    await transaction.put(state)
+```
+
+### Test a store implementation
+
+The reusable [`StateStoreContract`][refresh_engine.testing.StateStoreContract]
+provides async tests for insertion, overwrite, deletion, rollback, context-manager
+behavior, and immutable snapshots. Subclass it in your test suite and implement
+`make_store()` to return a fresh instance. Import the class from
+`refresh_engine.testing`:
+
+```python
+from refresh_engine import StateStore
+# StateStoreContract is provided by refresh_engine.testing.
+
+
+class TestDatabaseStore(StateStoreContract):
+    async def make_store(self) -> StateStore:
+        return DatabaseStore(await connect_to_test_database())
+```
+
+Pytest collects the inherited tests when the subclass name starts with `Test`.
 
 The repository includes two complete reference stores, which you can copy and adapt:
 

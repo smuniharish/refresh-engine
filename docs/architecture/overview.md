@@ -17,8 +17,7 @@ The application provides:
 
 The engine provides:
 
-- **triggers**: direct calls, an interval scheduler, and a thread-safe bridge for
-  external schedulers;
+- **triggers**: direct calls and an interval scheduler;
 - **overlap coordination**, which runs one refresh at a time and applies the overlap
   policy to concurrent requests;
 - the **refresh pipeline**, which observes resources, detects changes, plans
@@ -28,10 +27,9 @@ The engine provides:
 
 ## Design principles
 
-**Domain-neutral core.** The engine knows nothing about what a resource is. Two
-small contracts, the source and the operation, carry all domain knowledge, so the
-same engine refreshes documents, configuration, files, plugin registries, or search
-indexes.
+**Domain-neutral core.** The engine knows nothing about what a resource is. The
+source and operation carry all domain knowledge, so the same engine refreshes
+documents, configuration, files, plugin registries, or search indexes.
 
 **Safety before speed.** A failed or partial discovery never deletes anything. A
 failed operation never advances stored state. A failing resource never blocks

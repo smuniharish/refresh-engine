@@ -2,7 +2,7 @@
 
 Pass a selector to a `TARGETED` refresh to choose resources by their discovery
 data. Selectors compose with `&`, `|`, and `~`; see
-[`ResourceSelectorABC`][refresh_engine.ResourceSelectorABC].
+[`ResourceSelector`][refresh_engine.ResourceSelector].
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from refresh_engine._internal.values import id_set, require_id
-from refresh_engine.contracts import ResourceSelectorABC
+from refresh_engine.contracts import ResourceSelector
 from refresh_engine.errors import ConfigurationError
 from refresh_engine.models import Resource
 
@@ -19,7 +19,7 @@ __all__ = ["IDSelector", "PredicateSelector", "TagSelector"]
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class IDSelector(ResourceSelectorABC):
+class IDSelector(ResourceSelector):
     """Select resources whose ID is in a fixed set.
 
     Args:
@@ -47,7 +47,7 @@ class IDSelector(ResourceSelectorABC):
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class TagSelector(ResourceSelectorABC):
+class TagSelector(ResourceSelector):
     """Select resources by the tags stored in their metadata.
 
     A resource's tags are read from `metadata[key]`, which may hold a single string
@@ -101,7 +101,7 @@ class TagSelector(ResourceSelectorABC):
 
 
 @dataclass(frozen=True, slots=True)
-class PredicateSelector(ResourceSelectorABC):
+class PredicateSelector(ResourceSelector):
     """Select resources for which a function returns a truthy value.
 
     Attributes:

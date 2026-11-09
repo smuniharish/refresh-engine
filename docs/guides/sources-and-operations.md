@@ -1,18 +1,25 @@
 # Sources and operations
 
 Every integration provides a **source**, which lists and reads resources, and an
-**operation**, which applies changes to a destination. Both are plain objects with
-coroutine methods; no base class is required.
+**operation**, which applies changes to a destination. Sources subclass
+[`ResourceSource`][refresh_engine.ResourceSource]. An operation can be an
+asynchronous function or a [`RefreshOperation`][refresh_engine.RefreshOperation]
+subclass.
 
 ## Implementing a source
 
 ```python
 from collections.abc import AsyncIterator
 
-from refresh_engine import DiscoveryResult, Resource, ResourceSnapshot
+from refresh_engine import (
+    DiscoveryResult,
+    Resource,
+    ResourceSnapshot,
+    ResourceSource,
+)
 
 
-class DocumentSource:
+class DocumentSource(ResourceSource):
     def __init__(self, client: DocumentClient) -> None:
         self.client = client
 
@@ -86,7 +93,7 @@ async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
 
 ## Implementing an operation
 
-An operation is any callable with this signature:
+An operation can be an asynchronous function with this signature:
 
 ```python
 from refresh_engine import PlanAction, RefreshRequest, Resource, ResourceSnapshot
@@ -117,6 +124,10 @@ Raise an exception to report a failure. The resource's state is not advanced, so
 next refresh tries again. Configure [retries and timeouts](failure-handling.md) on
 the engine rather than inside the operation.
 
+For an operation implemented as a class, subclass
+[`RefreshOperation`][refresh_engine.RefreshOperation] and implement its asynchronous
+`__call__` method.
+
 !!! warning "Make operations idempotent and cancellation-friendly"
     An operation can run more than once for the same change: after a retry, after a
     timeout whose work completed anyway, or after a restart. Write destinations with
@@ -136,16 +147,10 @@ belong to cannot finish before they return. Awaited directly, `refresh()` raises
 `RuntimeError` there. See
 [Calling the engine from its own refreshes](scheduling.md#calling-the-engine-from-its-own-refreshes).
 
-## Protocols or base classes
+## Extension base classes
 
-Sources, operations, and every other extension point are defined twice:
-
-- as protocols, such as [`ResourceSource`][refresh_engine.ResourceSource], so any
-  object with the right methods works;
-- as abstract base classes, such as
-  [`ResourceSourceABC`][refresh_engine.ResourceSourceABC], which reject incomplete
-  implementations at construction time.
-
-Protocol parameters are positional-only, so your implementations may name their
-parameters freely. [Example 12](../examples.md#abstract-base-classes) uses the base
-classes throughout.
+Extension classes are abstract base classes. Subclass the corresponding class and
+implement its required methods; the method parameters are positional-only, so your
+implementation may name them freely. Plain asynchronous operation functions remain
+supported. [Example 12](../examples.md#abstract-base-classes) demonstrates class
+extensions.

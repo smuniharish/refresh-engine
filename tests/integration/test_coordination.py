@@ -6,14 +6,15 @@ from typing import Any, cast
 import pytest
 
 from refresh_engine import (
+    AsyncEventPublisher,
     EngineClosedError,
     EventKind,
-    EventPublisher,
     OverlapPolicy,
     PlanAction,
     RefreshConfig,
     RefreshEngine,
     RefreshMode,
+    RefreshOperation,
     RefreshRequest,
     RefreshResult,
     RefreshStatus,
@@ -24,7 +25,7 @@ from refresh_engine import (
 from tests.support import EventRecorder, FakeSource, RecordingOperation
 
 
-class Gate:
+class Gate(RefreshOperation):
     """An operation that blocks until released and records concurrency."""
 
     def __init__(self) -> None:
@@ -115,7 +116,7 @@ async def test_dependency_graph_executes_concurrently_in_dependency_order() -> N
 
 async def test_skip_if_running_returns_a_skipped_result() -> None:
     gate = Gate()
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     engine = RefreshEngine(
@@ -205,7 +206,7 @@ async def test_cancel_previous_returns_cancelled_results_to_superseded_callers()
     None
 ):
     gate = Gate()
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     engine = RefreshEngine(
@@ -237,7 +238,7 @@ async def test_cancel_previous_returns_cancelled_results_to_superseded_callers()
 
 async def test_cancelling_the_caller_cancels_the_refresh_without_committing() -> None:
     gate = Gate()
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     engine = RefreshEngine(FakeSource({"a": 1}), gate, events=events)

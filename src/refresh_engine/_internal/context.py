@@ -12,7 +12,7 @@ from typing import Any, Final
 from uuid import uuid4
 
 from refresh_engine._internal.values import EMPTY_MAPPING, utc_now
-from refresh_engine.events import EventKind, EventPublisherABC, RefreshEvent
+from refresh_engine.events import EventKind, EventPublisher, RefreshEvent
 from refresh_engine.models import (
     FailurePolicy,
     RefreshIssue,
@@ -138,7 +138,7 @@ class Emitter:
 
     __slots__ = ("_correlation_id", "_publisher", "_refresh_id")
 
-    def __init__(self, publisher: EventPublisherABC, ticket: RunTicket) -> None:
+    def __init__(self, publisher: EventPublisher, ticket: RunTicket) -> None:
         self._publisher = publisher
         self._refresh_id = ticket.refresh_id
         self._correlation_id = ticket.request.correlation_id

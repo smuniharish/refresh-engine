@@ -1,0 +1,31 @@
+{
+  "skill_name": "refresh-engine-extend",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We need a custom async database StateStore and tests proving it follows the refresh-engine contract. Which extension surface and contract should we use?",
+      "files": ["files/custom_store/store.py"],
+      "expected_output": "Subclass StateStore and use refresh_engine.testing.StateStoreContract, await StateStore.transaction(), and consult installed signatures rather than inventing the contract fixture.",
+      "assertions": [
+        "Routes to refresh-engine-extend",
+        "Names StateStore and StateTransaction as ABC extension points",
+        "Says StateStore.transaction() is awaited",
+        "Uses refresh_engine.testing.StateStoreContract",
+        "Does not invent a database schema or contract setup signature"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "We want an async custom event handler and a metrics adapter, while using a full tenacity policy and optional OpenTelemetry. Outline the supported extension choices.",
+      "files": [],
+      "expected_output": "Uses an async event-handler function or EventHandler subclass, subclasses MetricsSink with async writes, configures RetryConfig(retrying=AsyncRetrying(...)), and identifies refresh-engine[otel] with refresh_engine.otel.OpenTelemetryEventHandler.",
+      "assertions": [
+        "Allows a plain async event-handler function or an EventHandler subclass",
+        "Identifies MetricsSink writes as async",
+        "Uses the complete tenacity policy form",
+        "Names the optional extra and OpenTelemetry handler accurately",
+        "Does not claim unlisted delivery guarantees"
+      ]
+    }
+  ]
+}

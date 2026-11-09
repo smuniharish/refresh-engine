@@ -26,7 +26,7 @@ groups with release tooling.
 | `tests/unit/`, `tests/integration/` | Tests of each module and of complete refreshes. |
 | `tests/property/` | Property-based and stateful tests written with Hypothesis. |
 | `examples/` | Runnable examples, with their expected output in `examples/output/`. |
-| `docs/` | The documentation site, built with MkDocs. |
+| `docs/` | The documentation site, built with Zensical. |
 | `benchmarks/` | The benchmark script and recorded results. |
 | `scripts/` | Tooling for examples, documentation, diagrams, and distributions. |
 | `refresh-engine-skills/` | The Agent Skill and its validation guide. |
@@ -43,12 +43,12 @@ uv run pyrefly check
 uv run pytest --cov
 uv run python scripts/run_examples.py
 uv run python scripts/check_docs.py
-uv run mkdocs build --strict
+uv run zensical build --strict
 ```
 
 - Tests treat warnings as errors, and coverage must stay at 100% of lines and
   branches. Exclude code from coverage only when it cannot run, such as the body
-  of a protocol method.
+  of an abstract method.
 - Continuous integration runs the Hypothesis tests with more examples. Use the
   same profile locally with `HYPOTHESIS_PROFILE=ci`.
 - `examples/11_postgres_state_store.py` runs only when
@@ -56,19 +56,21 @@ uv run mkdocs build --strict
   `postgresql://postgres:postgres@localhost:5432/postgres`.
 - After changing an example, regenerate its expected output with
   `uv run python scripts/run_examples.py --update` and review the difference.
+- `uv run python scripts/run_examples.py --strict-live` requires every
+  external-service example to run instead of skipping it.
 - Code blocks in Markdown must compile. Mark a block with `<!-- test -->` to run
   it; a following `text` block holds its exact output.
 - `ruff format` also formats the Python blocks in Markdown files. Include example
   files in documentation with the block form of snippets, which ruff leaves
   untouched: a `--8<--` line, the file path, and another `--8<--` line.
 
-Continuous integration also tests Python 3.12, 3.13, and 3.14 on Linux and
+Continuous integration tests Python 3.12, 3.13, 3.14, and 3.15 on Linux and
 Windows, and validates the built distributions:
 
 ```bash
 uv build
 uv run twine check --strict dist/*
-uv run python scripts/validate_distribution.py dist --python 3.12 --python 3.14
+uv run python scripts/validate_distribution.py dist --python 3.12 --python 3.15
 ```
 
 ## Making changes
@@ -104,8 +106,8 @@ current public API. After changing the API or the skill, follow
 
 ## Releases
 
-1. Update `__version__` in `src/refresh_engine/__init__.py`, the skill's
-   `metadata.version`, and `CHANGELOG.md`.
+1. Update the version in `pyproject.toml`, the skill's `metadata.version`, and
+   `CHANGELOG.md`.
 2. Merge the changes into `master` after continuous integration passes.
 3. Push a `vX.Y.Z` tag. The release workflow checks that the tag matches the
    package version, runs the checks, and publishes to PyPI with trusted

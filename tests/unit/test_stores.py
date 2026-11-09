@@ -12,11 +12,10 @@ from refresh_engine import (
     ResourceFingerprint,
     ResourceState,
     StateStore,
-    StateStoreABC,
     StateStoreError,
     StateTransaction,
-    StateTransactionABC,
 )
+from refresh_engine.testing import StateStoreContract
 
 
 def state(resource_id: str, value: str = "v1") -> ResourceState:
@@ -32,25 +31,28 @@ BETA = state("beta")
 GAMMA = state("gamma")
 
 
-def test_store_implements_both_store_contracts() -> None:
+class TestInMemoryStateStoreContract(StateStoreContract):
+    async def make_store(self) -> StateStore:
+        return InMemoryStateStore()
+
+
+def test_store_implements_store_contract() -> None:
     store = InMemoryStateStore()
 
-    assert isinstance(store, StateStoreABC)
     assert isinstance(store, StateStore)
 
 
-def test_transactions_implement_both_transaction_contracts() -> None:
-    transaction = InMemoryStateStore().transaction()
+async def test_transactions_implement_transaction_contract() -> None:
+    transaction = await InMemoryStateStore().transaction()
 
-    assert isinstance(transaction, StateTransactionABC)
     assert isinstance(transaction, StateTransaction)
     assert transaction.closed is False
 
 
-def test_every_transaction_is_a_new_object() -> None:
+async def test_every_transaction_is_a_new_object() -> None:
     store = InMemoryStateStore()
 
-    assert store.transaction() is not store.transaction()
+    assert await store.transaction() is not await store.transaction()
 
 
 async def test_new_store_is_empty() -> None:
@@ -83,7 +85,7 @@ async def test_loaded_snapshot_does_not_change_after_later_commits() -> None:
     store = InMemoryStateStore({"alpha": ALPHA})
     before = await store.load_all()
 
-    transaction = store.transaction()
+    transaction = await store.transaction()
     await transaction.put(BETA)
     await transaction.delete("alpha")
     await transaction.commit()
@@ -95,7 +97,7 @@ async def test_loaded_snapshot_does_not_change_after_later_commits() -> None:
 async def test_commit_applies_puts_and_deletes_together() -> None:
     store = InMemoryStateStore({"alpha": ALPHA, "beta": BETA})
     updated = state("alpha", "v2")
-    transaction = store.transaction()
+    transaction = await store.transaction()
 
     await transaction.put(updated)
     await transaction.put(GAMMA)
@@ -108,7 +110,7 @@ async def test_commit_applies_puts_and_deletes_together() -> None:
 
 async def test_deleting_unknown_ids_is_ignored() -> None:
     store = InMemoryStateStore({"alpha": ALPHA})
-    transaction = store.transaction()
+    transaction = await store.transaction()
 
     await transaction.delete("missing")
     await transaction.commit()
@@ -118,7 +120,7 @@ async def test_deleting_unknown_ids_is_ignored() -> None:
 
 async def test_rollback_leaves_the_state_untouched() -> None:
     store = InMemoryStateStore({"alpha": ALPHA})
-    transaction = store.transaction()
+    transaction = await store.transaction()
     await transaction.put(BETA)
     await transaction.delete("alpha")
 
@@ -129,7 +131,7 @@ async def test_rollback_leaves_the_state_untouched() -> None:
 
 
 async def test_transaction_rejects_changes_after_commit() -> None:
-    transaction = InMemoryStateStore().transaction()
+    transaction = await InMemoryStateStore().transaction()
     await transaction.commit()
 
     with pytest.raises(StateStoreError, match="already closed"):
@@ -139,7 +141,7 @@ async def test_transaction_rejects_changes_after_commit() -> None:
 async def test_transaction_context_manager_commits_on_success() -> None:
     store = InMemoryStateStore()
 
-    async with store.transaction() as transaction:
+    async with await store.transaction() as transaction:
         await transaction.put(ALPHA)
 
     assert await store.load_all() == {"alpha": ALPHA}
@@ -149,7 +151,7 @@ async def test_transaction_context_manager_rolls_back_on_error() -> None:
     store = InMemoryStateStore({"alpha": ALPHA})
 
     async def delete_then_fail() -> None:
-        async with store.transaction() as transaction:
+        async with await store.transaction() as transaction:
             await transaction.delete("alpha")
             raise RuntimeError("interrupted")
 
@@ -161,8 +163,8 @@ async def test_transaction_context_manager_rolls_back_on_error() -> None:
 
 async def test_interleaved_transactions_keep_each_others_changes() -> None:
     store = InMemoryStateStore()
-    first = store.transaction()
-    second = store.transaction()
+    first = await store.transaction()
+    second = await store.transaction()
     await first.put(ALPHA)
     await second.put(BETA)
 

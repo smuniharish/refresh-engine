@@ -11,12 +11,12 @@ from refresh_engine import RefreshEngine, RefreshMode, Resource, ResourceSnapsho
 | --- | --- |
 | [Engine](engine.md) | `RefreshEngine` |
 | [Models and configuration](models.md) | Resources, snapshots, state, requests, results, configuration, and enumerations |
-| [Extension contracts](contracts.md) | Protocols and abstract base classes for sources, operations, fingerprints, state, selectors, and metrics |
+| [Extension contracts](contracts.md) | Abstract base classes for sources, operations, fingerprints, state, selectors, and metrics |
 | [Fingerprints](fingerprints.md) | Built-in fingerprint strategies and `canonical_digest` |
 | [Selectors](selectors.md) | `IDSelector`, `TagSelector`, and `PredicateSelector` |
 | [Events](events.md) | Lifecycle events, event handlers, and publishers |
 | [Logging and metrics](observability.md) | structlog and metrics handlers, metric sinks, and redaction |
-| [Scheduling](scheduling.md) | `AsyncScheduler` and `ExternalSchedulerAdapter` |
+| [Scheduling](scheduling.md) | `AsyncScheduler` and `SchedulerState` |
 | [State stores](stores.md) | `InMemoryStateStore` |
 | [Exceptions](errors.md) | The exception hierarchy |
 

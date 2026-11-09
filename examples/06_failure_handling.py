@@ -9,6 +9,7 @@ from refresh_engine import (
     PlanAction,
     RefreshConfig,
     RefreshEngine,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
@@ -17,7 +18,7 @@ from refresh_engine import (
 )
 
 
-class FlakyDestination:
+class FlakyDestination(RefreshOperation):
     """Fail the first `failures` writes of each resource in `flaky`."""
 
     def __init__(self, failures: int, flaky: set[str] | None = None) -> None:

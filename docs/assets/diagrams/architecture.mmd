@@ -5,7 +5,7 @@ flowchart TB
         coordinator["<b>Overlap policy</b><br/>coalesce · queue<br/>skip · cancel previous"]
         pipeline["<b>Refresh pipeline</b><br/>observe · detect<br/>plan · execute"]
         fingerprint["<b>FingerprintStrategy</b>"]
-        publisher["<b>EventPublisher</b>"]
+        publisher["<b>AsyncEventPublisher</b>"]
         triggers --> coordinator --> pipeline
         pipeline --> fingerprint
         pipeline --> publisher

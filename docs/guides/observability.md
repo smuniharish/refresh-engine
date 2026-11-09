@@ -35,14 +35,14 @@ Durations are in seconds.
 
 ## Subscribing handlers
 
-Pass an [`EventPublisher`][refresh_engine.EventPublisher] to the engine and subscribe
-handlers to it. A handler is any callable that accepts an event; it may be a
-coroutine function.
+Pass an [`AsyncEventPublisher`][refresh_engine.AsyncEventPublisher] to the engine and subscribe
+handlers to it. A handler must be an asynchronous function or an
+[`EventHandler`][refresh_engine.EventHandler] subclass.
 
 ```python
-from refresh_engine import EventKind, EventPublisher, RefreshEngine, RefreshEvent
+from refresh_engine import EventKind, AsyncEventPublisher, RefreshEngine, RefreshEvent
 
-events = EventPublisher()
+events = AsyncEventPublisher()
 
 
 async def alert_on_failure(event: RefreshEvent) -> None:
@@ -59,8 +59,7 @@ or break a refresh:
 
 - every handler receives every event in publication order, and handlers receive
   each event in subscription order;
-- synchronous handlers run on the event loop and must return quickly, while
-  coroutine handlers are awaited before the next delivery;
+- handlers are awaited before the next delivery;
 - handlers run with a fresh context, so context variables set by the code that
   requested a refresh are not visible to them; correlate events with their
   `refresh_id` and `correlation_id` instead;
@@ -79,9 +78,9 @@ or break a refresh:
 through [structlog](https://www.structlog.org):
 
 ```python
-from refresh_engine import EventPublisher, StructlogEventHandler
+from refresh_engine import AsyncEventPublisher, StructlogEventHandler
 
-events = EventPublisher()
+events = AsyncEventPublisher()
 events.subscribe(StructlogEventHandler())
 ```
 
@@ -117,30 +116,38 @@ counters and observations on any [`MetricsSink`][refresh_engine.MetricsSink]:
 | `refresh_engine.snapshot.failures` | counter | `phase` |
 | `refresh_engine.scheduler.failures` | counter | — |
 
-A sink is any object with `increment()` and `observe()` methods, which makes it easy
-to bridge to OpenTelemetry, Prometheus, or StatsD:
+A custom sink subclasses [`MetricsSink`][refresh_engine.MetricsSink] and implements
+asynchronous `increment()` and `observe()` methods. For example, the optional
+OpenTelemetry integration provides an event handler that records metrics and spans:
+import `OpenTelemetryEventHandler` from `refresh_engine.otel`.
 
 ```python
-from opentelemetry import metrics
+from opentelemetry import metrics, trace
+from refresh_engine import AsyncEventPublisher
 
-meter = metrics.get_meter("refresh_engine")
+# OpenTelemetryEventHandler is provided by refresh_engine.otel.
 
-
-class OpenTelemetrySink:
-    def __init__(self) -> None:
-        self.counters: dict[str, metrics.Counter] = {}
-        self.histograms: dict[str, metrics.Histogram] = {}
-
-    def increment(self, name, value=1, attributes=None, /) -> None:
-        if name not in self.counters:
-            self.counters[name] = meter.create_counter(name)
-        self.counters[name].add(value, attributes=dict(attributes or {}))
-
-    def observe(self, name, value, attributes=None, /) -> None:
-        if name not in self.histograms:
-            self.histograms[name] = meter.create_histogram(name, unit="s")
-        self.histograms[name].record(value, attributes=dict(attributes or {}))
+events = AsyncEventPublisher()
+events.subscribe(
+    OpenTelemetryEventHandler(
+        tracer=trace.get_tracer("refresh_engine"),
+        meter=metrics.get_meter("refresh_engine"),
+    )
+)
+engine = RefreshEngine(source, operation, events=events)
 ```
+
+Install the optional dependencies with `pip install refresh-engine[otel]`. The
+handler uses the supplied tracer and meter; your application configures and shuts
+down the OpenTelemetry providers and exporters.
+
+The [`OpenTelemetryEventHandler`][refresh_engine.otel.OpenTelemetryEventHandler]
+creates one span per refresh and resource operation and reports the metrics above.
+By default, spans carry only bounded attributes and the generated refresh ID. Pass
+`record_identifiers=True` to also record resource and correlation IDs on spans;
+enable it only when those IDs are safe to export. Refresh metadata and error
+messages are never recorded. If you implement your own sink, both methods must be asynchronous; the API reference
+documents their signatures.
 
 [`InMemoryMetrics`][refresh_engine.InMemoryMetrics] is a thread-safe sink for tests
 and small deployments.

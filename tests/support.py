@@ -9,12 +9,15 @@ from typing import Any
 
 from refresh_engine import (
     DiscoveryResult,
+    EventHandler,
     EventKind,
     PlanAction,
     RefreshEvent,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
+    ResourceSource,
 )
 
 
@@ -26,7 +29,7 @@ async def stream(items: Iterable[Resource]) -> AsyncIterator[Resource]:
 
 
 @dataclass
-class FakeSource:
+class FakeSource(ResourceSource):
     """A mutable, in-memory resource source.
 
     Attributes:
@@ -97,7 +100,7 @@ class FakeSource:
 
 
 @dataclass
-class RecordingOperation:
+class RecordingOperation(RefreshOperation):
     """An operation that records calls and fails on demand.
 
     Attributes:
@@ -150,12 +153,12 @@ class RecordingOperation:
 
 
 @dataclass
-class EventRecorder:
-    """A synchronous event handler that keeps every event."""
+class EventRecorder(EventHandler):
+    """An asynchronous event handler that keeps every event."""
 
     events: list[RefreshEvent] = field(default_factory=list)
 
-    def __call__(self, event: RefreshEvent) -> None:
+    async def __call__(self, event: RefreshEvent) -> None:
         self.events.append(event)
 
     def kinds(self) -> list[EventKind]:

@@ -5,18 +5,19 @@ import asyncio
 from refresh_engine import (
     ContentHash,
     DiscoveryResult,
-    FingerprintStrategyABC,
+    FingerprintStrategy,
     PlanAction,
     RefreshEngine,
     RefreshRequest,
     Resource,
     ResourceFingerprint,
     ResourceSnapshot,
+    ResourceSource,
     canonical_digest,
 )
 
 
-class ArticleSource:
+class ArticleSource(ResourceSource):
     """Articles with an ETag-like revision that changes with every edit."""
 
     def __init__(self) -> None:
@@ -44,7 +45,7 @@ class ArticleSource:
         )
 
 
-class PublishedFields(FingerprintStrategyABC):
+class PublishedFields(FingerprintStrategy):
     """Fingerprint only the fields that affect the published page."""
 
     async def fingerprint(self, snapshot: ResourceSnapshot, /) -> ResourceFingerprint:

@@ -8,11 +8,11 @@ from contextvars import ContextVar
 import pytest
 
 from refresh_engine import (
+    AsyncEventPublisher,
     AsyncScheduler,
     DiscoveryResult,
     EngineClosedError,
     EventKind,
-    EventPublisher,
     OverlapPolicy,
     PlanAction,
     RefreshConfig,
@@ -25,6 +25,7 @@ from refresh_engine import (
     RefreshStatus,
     Resource,
     ResourceSnapshot,
+    ResourceSource,
     SchedulerState,
     TriggerSource,
 )
@@ -70,7 +71,7 @@ async def test_awaiting_a_refresh_from_an_operation_fails_only_that_operation() 
 
 
 async def test_awaiting_a_refresh_from_the_source_fails_the_refresh() -> None:
-    class Source:
+    class Source(ResourceSource):
         async def discover(self) -> DiscoveryResult:
             await engine.submit(RefreshRequest())
             return DiscoveryResult([])
@@ -163,7 +164,7 @@ async def test_closing_with_cancel_from_an_operation_cancels_its_refresh() -> No
 async def test_closing_from_a_task_started_by_an_operation_waits_for_the_refresh() -> (
     None
 ):
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     shutdowns: list[asyncio.Task[list[EventKind]]] = []
@@ -220,7 +221,7 @@ async def test_closing_without_waiting_lets_accepted_refreshes_finish() -> None:
 
 
 async def test_closing_from_an_event_handler_does_not_wait_for_the_handler() -> None:
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
 
     async def close_when_done(event: RefreshEvent) -> None:
@@ -381,9 +382,13 @@ async def test_each_queued_refresh_runs_in_the_context_of_its_caller() -> None:
 
 
 async def test_event_handlers_do_not_see_the_context_of_the_caller() -> None:
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     values: set[str] = set()
-    events.subscribe(lambda event: values.add(CALLER.get()))
+
+    async def record_context(event: RefreshEvent) -> None:
+        values.add(CALLER.get())
+
+    events.subscribe(record_context)
     engine = RefreshEngine(FakeSource({"a": 1}), RecordingOperation(), events=events)
 
     async def call() -> RefreshResult:

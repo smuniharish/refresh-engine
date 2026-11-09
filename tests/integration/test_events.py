@@ -5,9 +5,9 @@ from typing import Any
 from structlog.testing import capture_logs
 
 from refresh_engine import (
+    AsyncEventPublisher,
     EventKind,
     EventPublisher,
-    EventPublisherABC,
     InMemoryMetrics,
     MetricsEventHandler,
     RefreshEngine,
@@ -17,8 +17,8 @@ from refresh_engine import (
 from tests.support import EventRecorder, FakeSource, RecordingOperation
 
 
-def recorded() -> tuple[EventPublisher, EventRecorder]:
-    events = EventPublisher()
+def recorded() -> tuple[AsyncEventPublisher, EventRecorder]:
+    events = AsyncEventPublisher()
     recorder = EventRecorder()
     events.subscribe(recorder)
     return events, recorder
@@ -149,7 +149,7 @@ async def test_refresh_failed_event_carries_the_refresh_level_exception() -> Non
 
 
 async def test_events_are_not_built_without_subscribers() -> None:
-    class CountingPublisher(EventPublisherABC):
+    class CountingPublisher(EventPublisher):
         def __init__(self) -> None:
             self.published = 0
 
@@ -177,7 +177,7 @@ async def test_events_are_not_built_without_subscribers() -> None:
 
 
 async def test_structlog_handler_logs_refreshes_end_to_end() -> None:
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     events.subscribe(StructlogEventHandler())
     with capture_logs() as logs:
         async with RefreshEngine(
@@ -193,7 +193,7 @@ async def test_structlog_handler_logs_refreshes_end_to_end() -> None:
 
 
 async def test_metrics_handler_counts_refreshes_end_to_end() -> None:
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     metrics = InMemoryMetrics()
     events.subscribe(MetricsEventHandler(metrics))
     async with RefreshEngine(

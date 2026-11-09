@@ -11,6 +11,7 @@ import sys
 
 from common import DictionarySource, Recorder
 from postgres_store import PostgresStateStore
+from psycopg_pool import AsyncConnectionPool
 
 from refresh_engine import RefreshEngine
 
@@ -26,12 +27,13 @@ async def run_process(store: PostgresStateStore, contents: dict[str, int]) -> st
 
 
 async def main() -> None:
-    store = PostgresStateStore(os.environ["REFRESH_ENGINE_POSTGRES_DSN"])
-    await store.create_schema()
-    await store.clear()
-    print("first start:  ", await run_process(store, {"alpha": 1, "beta": 1}))
-    print("restart:      ", await run_process(store, {"alpha": 1, "beta": 1}))
-    print("after change: ", await run_process(store, {"alpha": 2}))
+    async with AsyncConnectionPool(os.environ["REFRESH_ENGINE_POSTGRES_DSN"]) as pool:
+        store = PostgresStateStore(pool)
+        await store.create_schema()
+        await store.clear()
+        print("first start:  ", await run_process(store, {"alpha": 1, "beta": 1}))
+        print("restart:      ", await run_process(store, {"alpha": 1, "beta": 1}))
+        print("after change: ", await run_process(store, {"alpha": 2}))
 
 
 if __name__ == "__main__":

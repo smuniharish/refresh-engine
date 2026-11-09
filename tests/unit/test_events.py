@@ -1,4 +1,4 @@
-"""Tests for lifecycle events and the default `EventPublisher`."""
+"""Tests for lifecycle events and the default `AsyncEventPublisher`."""
 
 from __future__ import annotations
 
@@ -6,18 +6,20 @@ import asyncio
 import dataclasses
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
 
 from refresh_engine import (
+    AsyncEventPublisher,
     ConfigurationError,
     EventHandler,
+    EventHandlerCallable,
+    EventHandlerLike,
     EventKind,
     EventPublisher,
-    EventPublisherABC,
     RefreshEvent,
 )
 from tests.support import EventRecorder
@@ -29,7 +31,7 @@ def event(kind: EventKind = EventKind.REFRESH_STARTED) -> RefreshEvent:
     return RefreshEvent(kind)
 
 
-async def drain(publisher: EventPublisher) -> None:
+async def drain(publisher: AsyncEventPublisher) -> None:
     await asyncio.wait_for(publisher.drain(), timeout=TIMEOUT)
 
 
@@ -41,13 +43,13 @@ def publisher_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogReco
     ]
 
 
-class MinimalPublisher(EventPublisherABC):
+class MinimalPublisher(EventPublisher):
     """Implements only the abstract methods, keeping the default `has_subscribers`."""
 
-    def subscribe(self, handler: EventHandler) -> None:
+    def subscribe(self, handler: EventHandlerLike) -> None:
         return None
 
-    def unsubscribe(self, handler: EventHandler) -> None:
+    def unsubscribe(self, handler: EventHandlerLike) -> None:
         return None
 
     def publish(self, event: RefreshEvent) -> None:
@@ -118,12 +120,17 @@ def test_refresh_event_equality_and_hash_ignore_the_error() -> None:
     assert hash(failed) == hash(same)
 
 
-# EventPublisherABC
+# EventPublisher
+
+
+def test_event_handler_abc_requires_an_async_call_method() -> None:
+    with pytest.raises(TypeError, match="abstract"):
+        cast(Any, EventHandler)()
 
 
 def test_event_publisher_abc_requires_its_abstract_methods() -> None:
     with pytest.raises(TypeError, match="abstract"):
-        cast(Any, EventPublisherABC)()
+        cast(Any, EventPublisher)()
 
 
 def test_event_publisher_abc_reports_subscribers_by_default() -> None:
@@ -131,14 +138,14 @@ def test_event_publisher_abc_reports_subscribers_by_default() -> None:
 
 
 def test_event_publisher_is_an_event_publisher_abc() -> None:
-    assert isinstance(EventPublisher(), EventPublisherABC)
+    assert isinstance(AsyncEventPublisher(), EventPublisher)
 
 
 # Subscriptions
 
 
 def test_publisher_tracks_whether_it_has_subscribers() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     observed = [publisher.has_subscribers]
 
@@ -150,18 +157,23 @@ def test_publisher_tracks_whether_it_has_subscribers() -> None:
     assert observed == [False, True, False]
 
 
-@pytest.mark.parametrize("handler", [None, "handler", 1])
-def test_subscribe_rejects_non_callable_handlers(handler: object) -> None:
-    publisher = EventPublisher()
+@pytest.mark.parametrize("handler", [None, "handler", 1, lambda _: None])
+def test_subscribe_rejects_handlers_that_are_not_abc_or_async_functions(
+    handler: object,
+) -> None:
+    publisher = AsyncEventPublisher()
 
-    with pytest.raises(TypeError, match=r"^event handlers must be callable$"):
+    with pytest.raises(
+        TypeError,
+        match=(r"^event handlers must subclass EventHandler or be async functions$"),
+    ):
         publisher.subscribe(cast(Any, handler))
 
     assert publisher.has_subscribers is False
 
 
 async def test_subscribing_the_same_handler_twice_delivers_each_event_once() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     published = event()
 
@@ -174,7 +186,7 @@ async def test_subscribing_the_same_handler_twice_delivers_each_event_once() -> 
 
 
 async def test_a_bound_method_accessed_twice_is_the_same_handler() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
 
     publisher.subscribe(recorder.__call__)
@@ -188,7 +200,7 @@ async def test_a_bound_method_accessed_twice_is_the_same_handler() -> None:
 
 
 async def test_distinct_handlers_that_compare_equal_each_receive_every_event() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     first, second = EventRecorder(), EventRecorder()
     published = event()
 
@@ -202,12 +214,15 @@ async def test_distinct_handlers_that_compare_equal_each_receive_every_event() -
 
 
 async def test_unsubscribing_an_unknown_handler_has_no_effect() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     published = event()
     publisher.subscribe(recorder)
 
-    publisher.unsubscribe(lambda _: None)
+    async def unknown(_: RefreshEvent) -> None:
+        return None
+
+    publisher.unsubscribe(unknown)
     publisher.publish(published)
     await drain(publisher)
 
@@ -216,7 +231,7 @@ async def test_unsubscribing_an_unknown_handler_has_no_effect() -> None:
 
 
 async def test_unsubscribed_handlers_stop_receiving_events() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     publisher.subscribe(recorder)
     first = event()
@@ -230,15 +245,15 @@ async def test_unsubscribed_handlers_stop_receiving_events() -> None:
     assert recorder.events == [first]
 
 
-def numbered_handler(delivered: list[int], number: int) -> EventHandler:
-    def handler(_: RefreshEvent) -> None:
+def numbered_handler(delivered: list[int], number: int) -> EventHandlerCallable:
+    async def handler(_: RefreshEvent) -> None:
         delivered.append(number)
 
     return handler
 
 
 async def test_subscriptions_from_many_threads_are_all_kept() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     delivered: list[int] = []
     batches = [
         [numbered_handler(delivered, batch * 100 + index) for index in range(100)]
@@ -246,7 +261,7 @@ async def test_subscriptions_from_many_threads_are_all_kept() -> None:
     ]
 
     def apply(
-        action: Callable[[EventHandler], None], batch: list[EventHandler]
+        action: Callable[[EventHandlerLike], None], batch: list[EventHandlerLike]
     ) -> None:
         for handler in batch:
             action(handler)
@@ -268,7 +283,7 @@ async def test_subscriptions_from_many_threads_are_all_kept() -> None:
 
 
 def test_publish_without_subscribers_is_a_no_op_without_a_running_loop() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
 
     publisher.publish(event())
 
@@ -276,7 +291,7 @@ def test_publish_without_subscribers_is_a_no_op_without_a_running_loop() -> None
 
 
 def test_publish_with_subscribers_requires_a_running_loop() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     publisher.subscribe(EventRecorder())
 
     with pytest.raises(RuntimeError, match="no running event loop"):
@@ -284,7 +299,7 @@ def test_publish_with_subscribers_requires_a_running_loop() -> None:
 
 
 async def test_events_published_without_subscribers_are_dropped() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     later = event(EventKind.REFRESH_COMPLETED)
     publisher.publish(event(EventKind.REFRESH_STARTED))
@@ -300,7 +315,7 @@ async def test_events_published_without_subscribers_are_dropped() -> None:
 
 
 async def test_handlers_receive_events_in_publication_order() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     publisher.subscribe(recorder)
     published = [event(kind) for kind in EventKind]
@@ -313,10 +328,17 @@ async def test_handlers_receive_events_in_publication_order() -> None:
 
 
 async def test_each_event_reaches_handlers_in_subscription_order() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     log: list[tuple[str, EventKind]] = []
-    publisher.subscribe(lambda item: log.append(("first", item.kind)))
-    publisher.subscribe(lambda item: log.append(("second", item.kind)))
+
+    async def first(item: RefreshEvent) -> None:
+        log.append(("first", item.kind))
+
+    async def second(item: RefreshEvent) -> None:
+        log.append(("second", item.kind))
+
+    publisher.subscribe(first)
+    publisher.subscribe(second)
 
     publisher.publish(event(EventKind.REFRESH_STARTED))
     publisher.publish(event(EventKind.REFRESH_COMPLETED))
@@ -331,7 +353,7 @@ async def test_each_event_reaches_handlers_in_subscription_order() -> None:
 
 
 async def test_async_handlers_are_awaited_before_the_next_handler_runs() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     log: list[tuple[str, EventKind]] = []
 
     async def slow(item: RefreshEvent) -> None:
@@ -340,7 +362,11 @@ async def test_async_handlers_are_awaited_before_the_next_handler_runs() -> None
         log.append(("slow", item.kind))
 
     publisher.subscribe(slow)
-    publisher.subscribe(lambda item: log.append(("fast", item.kind)))
+
+    async def fast(item: RefreshEvent) -> None:
+        log.append(("fast", item.kind))
+
+    publisher.subscribe(fast)
     publisher.publish(event(EventKind.REFRESH_STARTED))
     publisher.publish(event(EventKind.REFRESH_COMPLETED))
     await drain(publisher)
@@ -353,29 +379,30 @@ async def test_async_handlers_are_awaited_before_the_next_handler_runs() -> None
     ]
 
 
-async def test_awaitables_returned_by_sync_handlers_are_awaited() -> None:
-    publisher = EventPublisher()
+async def test_async_function_handlers_are_awaited() -> None:
+    publisher = AsyncEventPublisher()
     finished: list[EventKind] = []
 
     async def finish(item: RefreshEvent) -> None:
         await asyncio.sleep(0)
         finished.append(item.kind)
 
-    def handler(item: RefreshEvent) -> Awaitable[None]:
-        return finish(item)
-
-    publisher.subscribe(handler)
+    publisher.subscribe(finish)
     publisher.publish(event(EventKind.SCHEDULER_STARTED))
     await drain(publisher)
 
     assert finished == [EventKind.SCHEDULER_STARTED]
 
 
-async def test_non_awaitable_handler_results_are_ignored() -> None:
-    publisher = EventPublisher()
+async def test_async_handler_return_values_are_ignored() -> None:
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     published = event()
-    publisher.subscribe(cast(Any, lambda _: 42))
+
+    async def ignored_result(_: RefreshEvent) -> int:
+        return 42
+
+    publisher.subscribe(ignored_result)
     publisher.subscribe(recorder)
 
     publisher.publish(published)
@@ -389,12 +416,12 @@ async def test_handler_exceptions_are_isolated_recorded_and_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="refresh_engine")
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     published = event(EventKind.REFRESH_STARTED)
     raised: list[Exception] = []
 
-    def failing(item: RefreshEvent) -> None:
+    async def failing(item: RefreshEvent) -> None:
         error = ValueError(f"cannot handle {item.kind.value}")
         raised.append(error)
         raise error
@@ -415,7 +442,7 @@ async def test_handler_exceptions_are_isolated_recorded_and_logged(
 
 
 async def test_async_handler_exceptions_are_isolated() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     first = event(EventKind.REFRESH_STARTED)
     second = event(EventKind.REFRESH_COMPLETED)
@@ -436,10 +463,10 @@ async def test_async_handler_exceptions_are_isolated() -> None:
 
 
 async def test_errors_keep_only_the_most_recent_exceptions() -> None:
-    publisher = EventPublisher(max_errors=2)
+    publisher = AsyncEventPublisher(max_errors=2)
     raised: list[Exception] = []
 
-    def failing(item: RefreshEvent) -> None:
+    async def failing(item: RefreshEvent) -> None:
         error = ValueError(str(len(raised)))
         raised.append(error)
         raise error
@@ -459,11 +486,11 @@ def test_max_errors_must_be_a_positive_integer(max_errors: object) -> None:
         ConfigurationError,
         match=f"^{re.escape('max_errors must be an integer of at least 1')}$",
     ):
-        EventPublisher(max_errors=cast(Any, max_errors))
+        AsyncEventPublisher(max_errors=cast(Any, max_errors))
 
 
 async def test_drain_waits_until_queued_events_are_delivered() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     published = event()
     gate = asyncio.Event()
     delivered: list[RefreshEvent] = []
@@ -487,7 +514,7 @@ async def test_drain_waits_until_queued_events_are_delivered() -> None:
 
 
 async def test_drain_returns_without_suspending_when_idle() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     probe_ran = asyncio.Event()
 
     async def probe() -> None:
@@ -502,7 +529,7 @@ async def test_drain_returns_without_suspending_when_idle() -> None:
 
 
 async def test_drain_returns_without_suspending_after_delivery_finished() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     publisher.subscribe(recorder)
     publisher.publish(event())
@@ -521,7 +548,7 @@ async def test_drain_returns_without_suspending_after_delivery_finished() -> Non
 
 
 async def test_drain_from_a_handler_returns_without_waiting_for_itself() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     delivered: list[EventKind] = []
 
     async def draining(item: RefreshEvent) -> None:
@@ -539,10 +566,10 @@ async def test_drain_from_a_handler_returns_without_waiting_for_itself() -> None
 
 
 async def test_events_published_by_handlers_during_dispatch_are_delivered() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     received: list[EventKind] = []
 
-    def republish(item: RefreshEvent) -> None:
+    async def republish(item: RefreshEvent) -> None:
         received.append(item.kind)
         if item.kind is EventKind.REFRESH_STARTED:
             publisher.publish(event(EventKind.REFRESH_COMPLETED))
@@ -555,7 +582,7 @@ async def test_events_published_by_handlers_during_dispatch_are_delivered() -> N
 
 
 async def test_events_published_while_a_handler_awaits_are_delivered_in_order() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     first = event(EventKind.REFRESH_STARTED)
     second = event(EventKind.REFRESH_COMPLETED)
     gate = asyncio.Event()
@@ -578,7 +605,7 @@ async def test_events_published_while_a_handler_awaits_are_delivered_in_order() 
 
 
 async def test_publishing_after_delivery_finished_starts_a_new_delivery() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     first = event(EventKind.REFRESH_STARTED)
     second = event(EventKind.REFRESH_COMPLETED)
@@ -593,7 +620,7 @@ async def test_publishing_after_delivery_finished_starts_a_new_delivery() -> Non
 
 
 async def test_dispatcher_yields_to_the_event_loop_during_long_deliveries() -> None:
-    publisher = EventPublisher()
+    publisher = AsyncEventPublisher()
     recorder = EventRecorder()
     publisher.subscribe(recorder)
     total = 1000

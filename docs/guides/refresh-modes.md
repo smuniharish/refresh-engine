@@ -61,10 +61,9 @@ everything_but_drafts = ~TagSelector("draft")
 billing_or_invoice = TagSelector("billing") | IDSelector(["invoice-17"])
 ```
 
-Any object with a `matches(resource)` method works as a selector, and
-[`ResourceSelectorABC`][refresh_engine.ResourceSelectorABC] adds the operators to
-your own selectors. A selector that matches no discovered resource produces a
-warning.
+Subclass [`ResourceSelector`][refresh_engine.ResourceSelector] to implement a
+custom selector; the base class adds the composition operators. A selector that
+matches no discovered resource produces a warning.
 
 ## Requests
 

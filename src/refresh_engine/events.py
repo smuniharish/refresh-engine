@@ -1,8 +1,8 @@
 """Lifecycle events and their asynchronous, in-order delivery.
 
 The engine and scheduler publish [`RefreshEvent`][refresh_engine.RefreshEvent]
-values to an [`EventPublisherABC`][refresh_engine.EventPublisherABC]. The default
-[`EventPublisher`][refresh_engine.EventPublisher] delivers them to subscribed
+values to an [`EventPublisher`][refresh_engine.EventPublisher]. The default
+[`AsyncEventPublisher`][refresh_engine.AsyncEventPublisher] delivers them to subscribed
 handlers in a background task, so slow or failing handlers never delay or break a
 refresh.
 """
@@ -16,7 +16,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
-from contextvars import Context
+from contextvars import Context, copy_context
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
@@ -30,10 +30,12 @@ from refresh_engine._internal.values import (
 )
 
 __all__ = [
+    "AsyncEventPublisher",
     "EventHandler",
+    "EventHandlerCallable",
+    "EventHandlerLike",
     "EventKind",
     "EventPublisher",
-    "EventPublisherABC",
     "RefreshEvent",
 ]
 
@@ -154,22 +156,28 @@ class RefreshEvent:
     timestamp: datetime = field(default_factory=utc_now)
     attributes: Mapping[str, Any] = field(default_factory=dict, hash=False)
     error: BaseException | None = field(default=None, compare=False, hash=False)
+    _context: Context = field(default_factory=copy_context, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         """Freeze the attributes."""
         object.__setattr__(self, "attributes", freeze_mapping(self.attributes))
 
 
-type EventHandler = Callable[[RefreshEvent], Awaitable[None] | None]
-"""A function or callable object that receives events.
+class EventHandler(ABC):
+    """Base class for asynchronous event handlers."""
 
-Synchronous handlers run on the event loop and must return quickly. Handlers that
-return an awaitable, such as `async def` functions, are awaited before the next
-handler runs.
-"""
+    @abstractmethod
+    async def __call__(self, event: RefreshEvent) -> None:
+        """Handle one event."""
 
 
-class EventPublisherABC(ABC):
+type EventHandlerCallable = Callable[[RefreshEvent], Awaitable[object]]
+"""An asynchronous function accepted directly as an event handler."""
+
+type EventHandlerLike = EventHandler | EventHandlerCallable
+
+
+class EventPublisher(ABC):
     """Contract for delivering lifecycle events to handlers."""
 
     @property
@@ -182,11 +190,11 @@ class EventPublisherABC(ABC):
         return True
 
     @abstractmethod
-    def subscribe(self, handler: EventHandler) -> None:
+    def subscribe(self, handler: EventHandlerLike) -> None:
         """Register `handler` to receive subsequently delivered events."""
 
     @abstractmethod
-    def unsubscribe(self, handler: EventHandler) -> None:
+    def unsubscribe(self, handler: EventHandlerLike) -> None:
         """Stop delivering events to `handler`."""
 
     @abstractmethod
@@ -205,13 +213,13 @@ class EventPublisherABC(ABC):
         """
 
 
-class EventPublisher(EventPublisherABC):
+class AsyncEventPublisher(EventPublisher):
     """Deliver events to handlers in publication order from a background task.
 
     Every handler receives every event in publication order, and handlers receive
     each event in subscription order. Handler exceptions are logged to the
     `refresh_engine` standard-library logger and kept in
-    [`errors`][refresh_engine.EventPublisher.errors]; they never reach the code
+    [`errors`][refresh_engine.AsyncEventPublisher.errors]; they never reach the code
     that published the event. Publishing is a no-op while there are no
     subscribers.
 
@@ -231,7 +239,7 @@ class EventPublisher(EventPublisherABC):
 
     def __init__(self, *, max_errors: int = 100) -> None:
         """Create a publisher without subscribers."""
-        self._handlers: tuple[EventHandler, ...] = ()
+        self._handlers: tuple[EventHandlerLike, ...] = ()
         self._lock = threading.Lock()
         self._queue: deque[RefreshEvent] = deque()
         self._dispatcher: asyncio.Task[None] | None = None
@@ -249,7 +257,7 @@ class EventPublisher(EventPublisherABC):
         """The most recent exceptions raised by handlers, oldest first."""
         return tuple(self._errors)
 
-    def subscribe(self, handler: EventHandler) -> None:
+    def subscribe(self, handler: EventHandlerLike) -> None:
         """Register `handler`; subscribing the same handler twice has no effect.
 
         Handlers are matched by identity; a bound method matches the same method
@@ -258,13 +266,18 @@ class EventPublisher(EventPublisherABC):
         Raises:
             TypeError: If `handler` is not callable.
         """
-        if not callable(handler):
-            raise TypeError("event handlers must be callable")
+        if not (
+            isinstance(handler, EventHandler)
+            or (callable(handler) and inspect.iscoroutinefunction(handler))
+        ):
+            raise TypeError(
+                "event handlers must subclass EventHandler or be async functions"
+            )
         with self._lock:
             if not any(_same_handler(item, handler) for item in self._handlers):
                 self._handlers = (*self._handlers, handler)
 
-    def unsubscribe(self, handler: EventHandler) -> None:
+    def unsubscribe(self, handler: EventHandlerLike) -> None:
         """Remove `handler`; removing an unknown handler has no effect."""
         with self._lock:
             self._handlers = tuple(
@@ -306,9 +319,7 @@ class EventPublisher(EventPublisherABC):
             event = self._queue.popleft()
             for handler in self._handlers:
                 try:
-                    outcome = handler(event)
-                    if outcome is not None and inspect.isawaitable(outcome):
-                        await outcome
+                    await handler(event)
                 except Exception as error:
                     self._errors.append(error)
                     _LOGGER.warning(

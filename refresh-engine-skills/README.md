@@ -1,38 +1,26 @@
-# refresh-engine Agent Skill
+# refresh-engine Agent Skills
 
-This directory distributes the [Agent Skill](https://agentskills.io) for
-refresh-engine. The skill teaches AI coding agents to integrate, configure, test,
-and troubleshoot the `refresh_engine` package. It contains instructions and a
-template only; it adds no runtime code.
+This directory distributes two [Agent Skills](https://agentskills.io) for
+`refresh-engine` 1.0.0. They provide focused workflows and checked templates;
+they do not add runtime code.
 
-| Path | Contents |
+| Skill | Use it for |
 | --- | --- |
-| [`skills/refresh-engine/SKILL.md`](skills/refresh-engine/SKILL.md) | Workflow, rules, a verified minimal integration, and the API quick reference. |
-| [`skills/refresh-engine/references/`](skills/refresh-engine/references/) | Focused guides that agents read on demand. |
-| [`skills/refresh-engine/assets/`](skills/refresh-engine/assets/) | A runnable, typed integration template. |
-| [`validation/`](validation/README.md) | How the skill is validated. |
+| [`refresh-engine`](skills/refresh-engine/SKILL.md) | Using refresh-engine in an application. |
+| [`refresh-engine-extend`](skills/refresh-engine-extend/SKILL.md) | Implementing custom ABC integrations, stores, retry policies, or telemetry. |
 
-The skill follows the [specification](https://agentskills.io/specification): its
-`name` matches its directory, and its frontmatter uses only standard fields. It
-works unchanged with Claude Code, Codex, Cursor, GitHub Copilot, and other
-compatible agents.
+Each skill has task routes, on-demand references, sample assets, and activation
+evaluations. See [`validation/README.md`](validation/README.md) for checks.
+The frontmatter follows the Agent Skills specification, and `skills.sh.json`
+registers both skills for discovery by the skills CLI.
 
 ## Installation
 
-Install it with the [skills CLI](https://www.skills.sh/docs/cli):
+Install one or both skills with the [skills CLI](https://www.skills.sh/docs/cli):
 
 ```bash
 npx skills add https://github.com/smuniharish/refresh-engine/tree/master/refresh-engine-skills/skills/refresh-engine
+npx skills add https://github.com/smuniharish/refresh-engine/tree/master/refresh-engine-skills/skills/refresh-engine-extend
 ```
 
-Or copy the complete `skills/refresh-engine` directory into a skills directory of
-your agent. The
-[installation guide](https://refresh-engine.readthedocs.io/en/latest/agent-skills/)
-lists the directories each agent reads.
-
-## Maintenance
-
-The skill is versioned with the package; `metadata.version` in `SKILL.md` matches
-the release it describes. When the public API or documented behavior changes,
-update the affected skill files in the same change and follow the
-[validation guide](validation/README.md).
+Or copy either complete skill directory into an Agent Skills directory.

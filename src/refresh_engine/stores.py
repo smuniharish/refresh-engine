@@ -6,13 +6,13 @@ from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from types import MappingProxyType
 
-from refresh_engine.contracts import StateStoreABC, StateTransactionABC
+from refresh_engine.contracts import StateStore, StateTransaction
 from refresh_engine.models import ResourceState
 
 __all__ = ["InMemoryStateStore"]
 
 
-class InMemoryStateStore(StateStoreABC):
+class InMemoryStateStore(StateStore):
     """Process-local state store; the default store of every engine.
 
     Commits replace the stored mapping atomically (copy-on-write), so
@@ -34,7 +34,7 @@ class InMemoryStateStore(StateStoreABC):
         """Return an immutable snapshot of every stored state."""
         return self._states
 
-    def transaction(self) -> StateTransactionABC:
+    async def transaction(self) -> StateTransaction:
         """Create a transaction that applies its changes atomically on commit."""
         return _InMemoryTransaction(self)
 
@@ -48,7 +48,7 @@ class InMemoryStateStore(StateStoreABC):
         self._states = MappingProxyType(states)
 
 
-class _InMemoryTransaction(StateTransactionABC):
+class _InMemoryTransaction(StateTransaction):
     def __init__(self, store: InMemoryStateStore) -> None:
         super().__init__()
         self._store = store

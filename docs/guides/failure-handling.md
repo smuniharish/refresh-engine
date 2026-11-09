@@ -61,6 +61,25 @@ plus up to `jitter` seconds, capped at `max_delay`. Exceptions that are not list
 in `retryable_exceptions` fail immediately. Retries apply to operations; a failed
 snapshot is retried by the next refresh.
 
+To supply a custom tenacity policy, pass an `AsyncRetrying` instance. It takes
+precedence over the individual `RetryConfig` fields:
+
+```python
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
+
+from refresh_engine import RefreshConfig, RetryConfig
+
+config = RefreshConfig(
+    retry=RetryConfig(
+        retrying=AsyncRetrying(
+            stop=stop_after_attempt(4),
+            retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+            reraise=True,
+        )
+    )
+)
+```
+
 ## Timeouts
 
 [`TimeoutConfig`][refresh_engine.TimeoutConfig] bounds each phase in seconds:

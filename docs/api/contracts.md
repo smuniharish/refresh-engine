@@ -1,46 +1,43 @@
 # Extension contracts
 
-Each extension point is available as a protocol, for structural typing, and as an
-abstract base class, which enforces the required methods and, where useful, adds
-reusable behavior. Protocol parameters are positional-only, so implementations may
-name their parameters freely.
+Extension points are abstract base classes that enforce the required methods and,
+where useful, add reusable behavior. Subclass the corresponding base class when
+implementing an extension.
 
 ## Sources
 
 ::: refresh_engine.ResourceSource
 
-::: refresh_engine.ResourceSourceABC
-
 ## Operations
+
+An operation can be an asynchronous function or a subclass of
+[`RefreshOperation`][refresh_engine.RefreshOperation]. The callable aliases
+[`RefreshOperationCallable`][refresh_engine.RefreshOperationCallable] and
+[`RefreshOperationLike`][refresh_engine.RefreshOperationLike] describe these forms.
 
 ::: refresh_engine.RefreshOperation
 
-::: refresh_engine.RefreshOperationABC
+::: refresh_engine.RefreshOperationCallable
+
+::: refresh_engine.RefreshOperationLike
 
 ## Fingerprint strategies
 
 ::: refresh_engine.FingerprintStrategy
 
-::: refresh_engine.FingerprintStrategyABC
-
 ## State stores
 
 ::: refresh_engine.StateStore
 
-::: refresh_engine.StateStoreABC
-
 ::: refresh_engine.StateTransaction
-
-::: refresh_engine.StateTransactionABC
 
 ## Selectors
 
-::: refresh_engine.ResourceSelector
+`ResourceSelector.matches()` is synchronous; selectors are used as pure predicates
+while the engine plans a refresh.
 
-::: refresh_engine.ResourceSelectorABC
+::: refresh_engine.ResourceSelector
 
 ## Metric sinks
 
 ::: refresh_engine.MetricsSink
-
-::: refresh_engine.MetricsSinkABC

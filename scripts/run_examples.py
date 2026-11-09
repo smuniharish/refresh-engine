@@ -5,8 +5,9 @@ exactly the text stored in `examples/output/<example>.txt`. Examples that need a
 external service are skipped unless the corresponding environment variable is set.
 
 Usage:
-    python scripts/run_examples.py            # verify every example
-    python scripts/run_examples.py --update   # rewrite the expected output
+    python scripts/run_examples.py                  # verify every available example
+    python scripts/run_examples.py --strict-live    # require external services
+    python scripts/run_examples.py --update         # rewrite the expected output
 """
 
 from __future__ import annotations
@@ -41,11 +42,20 @@ def main() -> int:
     parser.add_argument(
         "--update", action="store_true", help="rewrite the expected output files"
     )
+    parser.add_argument(
+        "--strict-live",
+        action="store_true",
+        help="fail if an example requiring an external service cannot run",
+    )
     arguments = parser.parse_args()
     failures = 0
     for example in sorted(EXAMPLES.glob("[0-9][0-9]_*.py")):
         variable = REQUIRES.get(example.name)
         if variable is not None and not os.environ.get(variable):
+            if arguments.strict_live:
+                failures += 1
+                print(f"FAIL  {example.name} (set {variable} to run it)")
+                continue
             print(f"skip  {example.name} (set {variable} to run it)")
             continue
         completed = run(example)

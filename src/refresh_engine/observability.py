@@ -2,7 +2,7 @@
 
 Subscribe [`StructlogEventHandler`][refresh_engine.StructlogEventHandler] and
 [`MetricsEventHandler`][refresh_engine.MetricsEventHandler] to an
-[`EventPublisher`][refresh_engine.EventPublisher] to log and measure refreshes
+[`AsyncEventPublisher`][refresh_engine.AsyncEventPublisher] to log and measure refreshes
 without touching application code.
 """
 
@@ -19,9 +19,9 @@ import structlog
 from structlog.typing import FilteringBoundLogger
 
 from refresh_engine._internal.values import require_id
-from refresh_engine.contracts import MetricsSink, MetricsSinkABC
+from refresh_engine.contracts import MetricsSink
 from refresh_engine.errors import ConfigurationError
-from refresh_engine.events import EventKind, RefreshEvent
+from refresh_engine.events import EventHandler, EventKind, RefreshEvent
 
 __all__ = [
     "InMemoryMetrics",
@@ -113,7 +113,7 @@ def default_redactor(values: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-class StructlogEventHandler:
+class StructlogEventHandler(EventHandler):
     """Log lifecycle events as structlog events.
 
     Each event is logged with its kind as the event name (for example
@@ -159,7 +159,7 @@ class StructlogEventHandler:
             merged[EventKind(kind)] = level
         self._levels = merged
 
-    def __call__(self, event: RefreshEvent) -> None:
+    async def __call__(self, event: RefreshEvent) -> None:
         """Log one event."""
         fields: dict[str, Any] = {}
         for key, value in event.attributes.items():
@@ -178,7 +178,7 @@ class StructlogEventHandler:
         log(event.kind.value, **safe)
 
 
-class MetricsEventHandler:
+class MetricsEventHandler(EventHandler):
     """Translate lifecycle events into counters and observations.
 
     | Metric | Kind | Attributes |
@@ -204,10 +204,12 @@ class MetricsEventHandler:
 
     def __init__(self, sink: MetricsSink, *, prefix: str = "refresh_engine") -> None:
         """Create a handler that reports to `sink`."""
+        if not isinstance(sink, MetricsSink):
+            raise TypeError("sink must subclass MetricsSink")
         self._sink = sink
         self._prefix = require_id(prefix, "prefix")
 
-    def __call__(self, event: RefreshEvent) -> None:
+    async def __call__(self, event: RefreshEvent) -> None:
         """Record the metrics derived from one event."""
         kind = event.kind
         values = event.attributes
@@ -215,12 +217,12 @@ class MetricsEventHandler:
         if kind in _TERMINAL:
             status = str(values.get("status"))
             mode = str(values.get("mode"))
-            self._sink.increment(
+            await self._sink.increment(
                 f"{prefix}.refreshes",
                 1,
                 {"status": status, "mode": mode, "trigger": str(values.get("trigger"))},
             )
-            self._observe(
+            await self._observe(
                 f"{prefix}.refresh.duration",
                 values.get("duration"),
                 {"status": status, "mode": mode},
@@ -229,7 +231,7 @@ class MetricsEventHandler:
             for change in _CHANGES:
                 count = values.get(change)
                 if isinstance(count, int) and count > 0:
-                    self._sink.increment(
+                    await self._sink.increment(
                         f"{prefix}.resources.detected", count, {"change": change}
                     )
         elif kind in (
@@ -243,23 +245,25 @@ class MetricsEventHandler:
                 EventKind.RESOURCE_REFRESH_SKIPPED: "skipped",
             }[kind]
             attributes = {"action": str(values.get("action")), "outcome": outcome}
-            self._sink.increment(f"{prefix}.operations", 1, attributes)
-            self._observe(
+            await self._sink.increment(f"{prefix}.operations", 1, attributes)
+            await self._observe(
                 f"{prefix}.operation.duration", values.get("duration"), attributes
             )
         elif kind is EventKind.RESOURCE_SNAPSHOT_FAILED:
-            self._sink.increment(
+            await self._sink.increment(
                 f"{prefix}.snapshot.failures", 1, {"phase": str(values.get("phase"))}
             )
         elif kind is EventKind.SCHEDULER_RUN_FAILED:
-            self._sink.increment(f"{prefix}.scheduler.failures", 1, None)
+            await self._sink.increment(f"{prefix}.scheduler.failures", 1, None)
 
-    def _observe(self, name: str, value: object, attributes: Mapping[str, str]) -> None:
+    async def _observe(
+        self, name: str, value: object, attributes: Mapping[str, str]
+    ) -> None:
         if isinstance(value, int | float) and not isinstance(value, bool):
-            self._sink.observe(name, float(value), attributes)
+            await self._sink.observe(name, float(value), attributes)
 
 
-class InMemoryMetrics(MetricsSinkABC):
+class InMemoryMetrics(MetricsSink):
     """Thread-safe in-memory metric sink for tests and small deployments.
 
     Metrics are keyed by name and attributes, formatted as
@@ -272,7 +276,7 @@ class InMemoryMetrics(MetricsSinkABC):
         self._observations: defaultdict[str, list[float]] = defaultdict(list)
         self._lock = threading.Lock()
 
-    def increment(
+    async def increment(
         self,
         name: str,
         value: int = 1,
@@ -284,7 +288,7 @@ class InMemoryMetrics(MetricsSinkABC):
         with self._lock:
             self._counters[key] += value
 
-    def observe(
+    async def observe(
         self,
         name: str,
         value: float,

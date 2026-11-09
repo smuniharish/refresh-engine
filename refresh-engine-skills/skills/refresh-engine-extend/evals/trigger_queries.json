@@ -1,0 +1,25 @@
+{
+  "skill_name": "refresh-engine-extend",
+  "queries": [
+    {"query": "implement a custom refresh-engine StateStore and run its store contract", "should_trigger": true, "split": "train"},
+    {"query": "write a StateTransaction subclass for my database backend", "should_trigger": true, "split": "train"},
+    {"query": "add a custom FingerprintStrategy ABC implementation", "should_trigger": true, "split": "train"},
+    {"query": "I need a ResourceSelector subclass for refresh-engine", "should_trigger": true, "split": "train"},
+    {"query": "make an async MetricsSink implementation", "should_trigger": true, "split": "train"},
+    {"query": "create a custom EventPublisher and EventHandler integration", "should_trigger": true, "split": "train"},
+    {"query": "use refresh_engine.testing.StateStoreContract against my store", "should_trigger": true, "split": "validation"},
+    {"query": "write a refresh-engine ResourceSource adapter for our API", "should_trigger": true, "split": "validation"},
+    {"query": "configure a custom tenacity AsyncRetrying policy for refresh-engine", "should_trigger": true, "split": "validation"},
+    {"query": "implement an OpenTelemetry handler for refresh-engine events", "should_trigger": true, "split": "validation"},
+    {"query": "keep an application's search index up to date using refresh-engine", "should_trigger": false, "split": "train"},
+    {"query": "await engine.submit from my async application", "should_trigger": false, "split": "train"},
+    {"query": "install and use refresh-engine[otel] in an application", "should_trigger": false, "split": "train"},
+    {"query": "use AsyncEventPublisher for queued events in my application", "should_trigger": false, "split": "train"},
+    {"query": "show me the ordinary async refresh-engine integration workflow", "should_trigger": false, "split": "train"},
+    {"query": "configure the full retry policy for an existing refresh-engine application", "should_trigger": false, "split": "train"},
+    {"query": "what is the direct async engine.submit usage?", "should_trigger": false, "split": "validation"},
+    {"query": "connect an async inventory source and operation to refresh-engine", "should_trigger": false, "split": "validation"},
+    {"query": "send refresh-engine events to the built-in OpenTelemetry handler", "should_trigger": false, "split": "validation"},
+    {"query": "set up queued event publishing in a refresh-engine app", "should_trigger": false, "split": "validation"}
+  ]
+}

@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import Any, cast
 
 import pytest
+from tenacity import AsyncRetrying, stop_after_attempt
 
 from refresh_engine import (
     ConfigurationError,
@@ -28,6 +29,7 @@ from refresh_engine import (
     Resource,
     ResourceExecutionResult,
     ResourceFingerprint,
+    ResourceSelector,
     ResourceSnapshot,
     ResourceState,
     RetryConfig,
@@ -55,7 +57,7 @@ def make_result(errors: tuple[RefreshIssue, ...] = ()) -> RefreshResult:
     )
 
 
-class MatchEverything:
+class MatchEverything(ResourceSelector):
     def matches(self, resource: Resource, /) -> bool:
         return True
 
@@ -518,16 +520,14 @@ def test_refresh_request_rejects_invalid_resource_ids(resource_ids: list[Any]) -
     [object(), NotASelector(), "a"],
     ids=["object", "non-callable-matches", "str"],
 )
-def test_refresh_request_requires_a_selector_with_a_matches_method(
-    selector: object,
-) -> None:
+def test_refresh_request_requires_a_resource_selector(selector: object) -> None:
     with pytest.raises(
-        ConfigurationError, match=exactly("selector must provide a matches() method")
+        ConfigurationError, match=exactly("selector must subclass ResourceSelector")
     ):
         RefreshRequest(mode=RefreshMode.TARGETED, selector=cast(Any, selector))
 
 
-def test_targeted_request_accepts_a_protocol_selector() -> None:
+def test_targeted_request_accepts_a_resource_selector() -> None:
     selector = MatchEverything()
 
     request = RefreshRequest(mode=RefreshMode.TARGETED, selector=selector)
@@ -680,6 +680,20 @@ def test_retry_config_defaults() -> None:
     assert config.exponential_base == 2.0
     assert config.jitter == 0.0
     assert config.retryable_exceptions == (Exception,)
+
+
+def test_retry_config_accepts_a_tenacity_policy() -> None:
+    policy = AsyncRetrying(stop=stop_after_attempt(2))
+
+    assert RetryConfig(retrying=policy).retrying is policy
+
+
+def test_retry_config_rejects_non_tenacity_policy() -> None:
+    with pytest.raises(
+        ConfigurationError,
+        match=exactly("retrying must be a tenacity AsyncRetrying"),
+    ):
+        RetryConfig(retrying=cast(Any, object()))
 
 
 def test_retry_config_accepts_boundary_values() -> None:

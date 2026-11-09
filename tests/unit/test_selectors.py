@@ -14,7 +14,6 @@ from refresh_engine import (
     PredicateSelector,
     Resource,
     ResourceSelector,
-    ResourceSelectorABC,
     TagSelector,
 )
 
@@ -269,7 +268,7 @@ def test_predicate_selectors_compare_by_predicate() -> None:
 
 # Shared behavior
 
-SELECTORS: list[ResourceSelectorABC] = [
+SELECTORS: list[ResourceSelector] = [
     IDSelector("alpha"),
     TagSelector("critical"),
     PredicateSelector(lambda _: True),
@@ -280,16 +279,16 @@ SELECTORS: list[ResourceSelectorABC] = [
     "selector", SELECTORS, ids=lambda selector: type(selector).__name__
 )
 def test_selectors_implement_both_selector_contracts(
-    selector: ResourceSelectorABC,
+    selector: ResourceSelector,
 ) -> None:
-    assert isinstance(selector, ResourceSelectorABC)
+    assert isinstance(selector, ResourceSelector)
     assert isinstance(selector, ResourceSelector)
 
 
 @pytest.mark.parametrize(
     "selector", SELECTORS, ids=lambda selector: type(selector).__name__
 )
-def test_selectors_are_frozen(selector: ResourceSelectorABC) -> None:
+def test_selectors_are_frozen(selector: ResourceSelector) -> None:
     field = dataclasses.fields(cast(Any, selector))[0].name
 
     with pytest.raises(dataclasses.FrozenInstanceError):

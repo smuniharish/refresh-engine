@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from inspect import iscoroutinefunction
 from types import TracebackType
 from typing import Any, Self
 
@@ -13,11 +14,12 @@ from refresh_engine._internal.values import id_set
 from refresh_engine.contracts import (
     FingerprintStrategy,
     RefreshOperation,
+    RefreshOperationLike,
     ResourceSelector,
     ResourceSource,
     StateStore,
 )
-from refresh_engine.events import EventPublisher, EventPublisherABC
+from refresh_engine.events import AsyncEventPublisher, EventPublisher
 from refresh_engine.fingerprints import CompositeHash
 from refresh_engine.models import (
     RefreshConfig,
@@ -59,7 +61,7 @@ class RefreshEngine:
         config: Execution settings; defaults to
             [`RefreshConfig()`][refresh_engine.RefreshConfig].
         events: Publisher for lifecycle events; defaults to a new
-            [`EventPublisher`][refresh_engine.EventPublisher].
+            [`AsyncEventPublisher`][refresh_engine.AsyncEventPublisher].
 
     Raises:
         TypeError: If an argument does not implement its contract.
@@ -75,30 +77,35 @@ class RefreshEngine:
     def __init__(
         self,
         source: ResourceSource,
-        operation: RefreshOperation,
+        operation: RefreshOperationLike,
         *,
         fingerprint: FingerprintStrategy | None = None,
         store: StateStore | None = None,
         config: RefreshConfig | None = None,
-        events: EventPublisherABC | None = None,
+        events: EventPublisher | None = None,
     ) -> None:
         """Create an engine."""
         fingerprint = CompositeHash() if fingerprint is None else fingerprint
         store = InMemoryStateStore() if store is None else store
         config = RefreshConfig() if config is None else config
-        events = EventPublisher() if events is None else events
+        events = AsyncEventPublisher() if events is None else events
         if not isinstance(source, ResourceSource):
-            raise TypeError("source must provide discover() and snapshot()")
-        if not callable(operation):
-            raise TypeError("operation must be callable")
+            raise TypeError("source must subclass ResourceSource")
+        if not (
+            isinstance(operation, RefreshOperation)
+            or (callable(operation) and iscoroutinefunction(operation))
+        ):
+            raise TypeError(
+                "operation must subclass RefreshOperation or be an async function"
+            )
         if not isinstance(fingerprint, FingerprintStrategy):
-            raise TypeError("fingerprint must provide fingerprint()")
+            raise TypeError("fingerprint must subclass FingerprintStrategy")
         if not isinstance(store, StateStore):
-            raise TypeError("store must provide load_all() and transaction()")
+            raise TypeError("store must subclass StateStore")
         if not isinstance(config, RefreshConfig):
             raise TypeError("config must be a RefreshConfig")
-        if not isinstance(events, EventPublisherABC):
-            raise TypeError("events must be an EventPublisherABC")
+        if not isinstance(events, EventPublisher):
+            raise TypeError("events must be an EventPublisher")
         self._source = source
         self._operation = operation
         self._fingerprint = fingerprint
@@ -118,7 +125,7 @@ class RefreshEngine:
         return self._source
 
     @property
-    def operation(self) -> RefreshOperation:
+    def operation(self) -> RefreshOperationLike:
         """The refresh operation."""
         return self._operation
 
@@ -138,7 +145,7 @@ class RefreshEngine:
         return self._config
 
     @property
-    def events(self) -> EventPublisherABC:
+    def events(self) -> EventPublisher:
         """The lifecycle event publisher."""
         return self._events
 

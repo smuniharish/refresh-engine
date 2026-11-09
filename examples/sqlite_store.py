@@ -19,9 +19,9 @@ from types import MappingProxyType
 from refresh_engine import (
     ResourceFingerprint,
     ResourceState,
-    StateStoreABC,
+    StateStore,
     StateStoreError,
-    StateTransactionABC,
+    StateTransaction,
 )
 
 SCHEMA = """
@@ -76,7 +76,7 @@ def from_row(row: Row) -> ResourceState:
     )
 
 
-class SQLiteStateStore(StateStoreABC):
+class SQLiteStateStore(StateStore):
     """Persist resource state in a SQLite database file."""
 
     def __init__(self, path: Path) -> None:
@@ -94,17 +94,20 @@ class SQLiteStateStore(StateStoreABC):
             raise StateStoreError(f"cannot load state: {error}") from error
 
     def _load_all(self) -> Mapping[str, ResourceState]:
-        with self.connect() as connection:
-            rows = connection.execute("SELECT * FROM resource_state").fetchall()
-        connection.close()
+        connection = self.connect()
+        try:
+            with connection:
+                rows = connection.execute("SELECT * FROM resource_state").fetchall()
+        finally:
+            connection.close()
         states = {row[0]: from_row(row) for row in rows}
         return MappingProxyType(states)
 
-    def transaction(self) -> StateTransactionABC:
+    async def transaction(self) -> StateTransaction:
         return SQLiteTransaction(self)
 
 
-class SQLiteTransaction(StateTransactionABC):
+class SQLiteTransaction(StateTransaction):
     """Apply staged changes in one SQLite transaction."""
 
     def __init__(self, store: SQLiteStateStore) -> None:

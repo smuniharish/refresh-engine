@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
-from contextlib import suppress
 from time import perf_counter
 from typing import Final
 
@@ -29,11 +29,12 @@ from refresh_engine._internal.observation import (
 from refresh_engine._internal.planning import build_plan
 from refresh_engine.contracts import (
     FingerprintStrategy,
-    RefreshOperation,
+    RefreshOperationLike,
     ResourceSource,
     StateStore,
+    StateTransaction,
 )
-from refresh_engine.events import EventKind, EventPublisherABC
+from refresh_engine.events import EventKind, EventPublisher
 from refresh_engine.models import (
     RefreshConfig,
     RefreshMode,
@@ -46,6 +47,7 @@ from refresh_engine.models import (
 
 _YIELD_EVERY: Final = 1024
 _PREVIEW: Final = 5
+_LOGGER: Final = logging.getLogger("refresh_engine")
 
 
 class _StageAbortedError(Exception):
@@ -64,11 +66,11 @@ class RefreshPipeline:
     def __init__(
         self,
         source: ResourceSource,
-        operation: RefreshOperation,
+        operation: RefreshOperationLike,
         fingerprint: FingerprintStrategy,
         store: StateStore,
         config: RefreshConfig,
-        events: EventPublisherABC,
+        events: EventPublisher,
     ) -> None:
         self._source = source
         self._operation = operation
@@ -373,16 +375,33 @@ class RefreshPipeline:
             return
         context.phase = RefreshPhase.PERSISTENCE
         started = perf_counter()
-        transaction = self._store.transaction()
+        transaction: StateTransaction | None = None
         try:
+            transaction = await self._store.transaction()
+            if not isinstance(transaction, StateTransaction):
+                raise TypeError("store.transaction() must return a StateTransaction")
             for state in puts:
                 await transaction.put(state)
             for resource_id in deletes:
                 await transaction.delete(resource_id)
             await transaction.commit()
         except BaseException as error:
-            with suppress(Exception):
-                await transaction.rollback()
+            if isinstance(transaction, StateTransaction):
+                try:
+                    await transaction.rollback()
+                except asyncio.CancelledError:
+                    if not isinstance(error, asyncio.CancelledError):
+                        raise
+                    _LOGGER.exception(
+                        "state transaction rollback was cancelled after persistence "
+                        "was already cancelled"
+                    )
+                except Exception as rollback_error:
+                    _LOGGER.error(
+                        "state transaction rollback failed; preserving the "
+                        "persistence error",
+                        exc_info=rollback_error,
+                    )
             if not isinstance(error, Exception):
                 raise
             context.fail_refresh(

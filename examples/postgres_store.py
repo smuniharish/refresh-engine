@@ -14,13 +14,14 @@ from types import MappingProxyType
 
 import psycopg
 from psycopg.types.json import Jsonb
+from psycopg_pool import AsyncConnectionPool
 
 from refresh_engine import (
     ResourceFingerprint,
     ResourceState,
-    StateStoreABC,
+    StateStore,
     StateStoreError,
-    StateTransactionABC,
+    StateTransaction,
 )
 
 SCHEMA = """
@@ -48,25 +49,23 @@ ON CONFLICT (resource_id) DO UPDATE SET
 """
 
 
-class PostgresStateStore(StateStoreABC):
+class PostgresStateStore(StateStore):
     """Persist resource state in a PostgreSQL table."""
 
-    def __init__(self, conninfo: str) -> None:
-        self.conninfo = conninfo
+    def __init__(self, pool: AsyncConnectionPool) -> None:
+        self.pool = pool
 
     async def create_schema(self) -> None:
-        async with await psycopg.AsyncConnection.connect(self.conninfo) as connection:
+        async with self.pool.connection() as connection:
             await connection.execute(SCHEMA)
 
     async def clear(self) -> None:
-        async with await psycopg.AsyncConnection.connect(self.conninfo) as connection:
+        async with self.pool.connection() as connection:
             await connection.execute("DELETE FROM refresh_engine_state")
 
     async def load_all(self) -> Mapping[str, ResourceState]:
         try:
-            async with await psycopg.AsyncConnection.connect(
-                self.conninfo
-            ) as connection:
+            async with self.pool.connection() as connection:
                 cursor = await connection.execute("SELECT * FROM refresh_engine_state")
                 rows = await cursor.fetchall()
         except psycopg.Error as error:
@@ -86,11 +85,11 @@ class PostgresStateStore(StateStoreABC):
             }
         )
 
-    def transaction(self) -> StateTransactionABC:
+    async def transaction(self) -> StateTransaction:
         return PostgresTransaction(self)
 
 
-class PostgresTransaction(StateTransactionABC):
+class PostgresTransaction(StateTransaction):
     """Apply staged changes in one PostgreSQL transaction."""
 
     def __init__(self, store: PostgresStateStore) -> None:
@@ -118,9 +117,7 @@ class PostgresTransaction(StateTransactionABC):
         ]
         try:
             async with (
-                await psycopg.AsyncConnection.connect(
-                    self.store.conninfo
-                ) as connection,
+                self.store.pool.connection() as connection,
                 connection.transaction(),
                 connection.cursor() as cursor,
             ):

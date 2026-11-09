@@ -1,24 +1,13 @@
-"""Extension contracts implemented by applications.
-
-Each extension point is available in two styles:
-
-- a [`typing.Protocol`][typing.Protocol] for structural typing, so any object with
-  matching methods works without inheriting anything;
-- an abstract base class that enforces the required methods and, where useful,
-  supplies reusable behavior.
-
-Protocol parameters are positional-only, so implementations may use any parameter
-names.
-"""
+"""Abstract base classes for application-defined extensions."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType, TracebackType
-from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Self
 
 from refresh_engine.errors import StateStoreError
 
@@ -35,165 +24,19 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FingerprintStrategy",
-    "FingerprintStrategyABC",
     "MetricsSink",
-    "MetricsSinkABC",
     "RefreshOperation",
-    "RefreshOperationABC",
+    "RefreshOperationCallable",
+    "RefreshOperationLike",
     "ResourceSelector",
-    "ResourceSelectorABC",
     "ResourceSource",
-    "ResourceSourceABC",
     "StateStore",
-    "StateStoreABC",
     "StateTransaction",
-    "StateTransactionABC",
 ]
 
 
-@runtime_checkable
-class ResourceSource(Protocol):
-    """Discovers resources and reads their snapshots."""
-
-    async def discover(self) -> DiscoveryResult:
-        """Discover the current resources.
-
-        Returns:
-            The discovered resources and whether the listing is complete.
-
-        Raises:
-            Exception: Any exception marks the discovery as failed. The engine then
-                performs no change detection and never infers deletions.
-        """
-
-    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
-        """Read the observable state of one discovered resource.
-
-        Args:
-            resource: A resource returned by the current discovery.
-
-        Returns:
-            A snapshot whose `resource_id` matches `resource.resource_id`.
-
-        Raises:
-            Exception: Any exception marks only this resource as failed; its
-                previous state is kept.
-        """
-
-
-@runtime_checkable
-class RefreshOperation(Protocol):
-    """Applies an application-defined side effect for one resource."""
-
-    async def __call__(
-        self,
-        resource: Resource,
-        snapshot: ResourceSnapshot | None,
-        action: PlanAction,
-        request: RefreshRequest,
-        /,
-    ) -> None:
-        """Refresh or delete one resource.
-
-        Operations should be idempotent and must not suppress cancellation,
-        because a retry, timeout, or restart can run them again.
-
-        Args:
-            resource: The discovered resource. For `PlanAction.DELETE` it carries
-                only the ID of the deleted resource.
-            snapshot: The current snapshot for `PlanAction.REFRESH`; `None` for
-                `PlanAction.DELETE`.
-            action: Whether to refresh or delete the resource.
-            request: The request that planned the operation.
-
-        Raises:
-            Exception: Any exception marks the operation as failed, so the
-                resource state is not advanced.
-        """
-
-
-@runtime_checkable
-class FingerprintStrategy(Protocol):
-    """Computes a deterministic fingerprint of a snapshot."""
-
-    async def fingerprint(self, snapshot: ResourceSnapshot, /) -> ResourceFingerprint:
-        """Fingerprint a snapshot.
-
-        Equal snapshots must always produce equal fingerprints, and every value that
-        affects the refresh outcome must contribute to the fingerprint.
-
-        Args:
-            snapshot: The snapshot to fingerprint.
-
-        Returns:
-            The fingerprint of the snapshot.
-        """
-
-
-@runtime_checkable
-class StateTransaction(Protocol):
-    """Stages state changes and applies them atomically."""
-
-    async def put(self, state: ResourceState, /) -> None:
-        """Stage an insert or update of a resource state."""
-
-    async def delete(self, resource_id: str, /) -> None:
-        """Stage the removal of a resource state."""
-
-    async def commit(self) -> None:
-        """Apply every staged change atomically."""
-
-    async def rollback(self) -> None:
-        """Discard every staged change."""
-
-
-@runtime_checkable
-class StateStore(Protocol):
-    """Persists the last successfully refreshed state of every resource."""
-
-    async def load_all(self) -> Mapping[str, ResourceState]:
-        """Return the last committed state of every resource, keyed by ID."""
-
-    def transaction(self) -> StateTransaction:
-        """Create a transaction for staging and committing changes."""
-
-
-@runtime_checkable
-class ResourceSelector(Protocol):
-    """Selects resources by inspecting their discovery data."""
-
-    def matches(self, resource: Resource, /) -> bool:
-        """Return whether `resource` is selected."""
-
-
-@runtime_checkable
-class MetricsSink(Protocol):
-    """Receives counters and numeric observations."""
-
-    def increment(
-        self,
-        name: str,
-        value: int = 1,
-        attributes: Mapping[str, str] | None = None,
-        /,
-    ) -> None:
-        """Add `value` to the counter `name`."""
-
-    def observe(
-        self,
-        name: str,
-        value: float,
-        attributes: Mapping[str, str] | None = None,
-        /,
-    ) -> None:
-        """Record one observation of `value` for the metric `name`."""
-
-
-class ResourceSourceABC(ABC):
-    """Base class for resource sources.
-
-    See [`ResourceSource`][refresh_engine.ResourceSource] for the contract.
-    """
+class ResourceSource(ABC):
+    """Base class for resource sources."""
 
     @abstractmethod
     async def discover(self) -> DiscoveryResult:
@@ -204,11 +47,8 @@ class ResourceSourceABC(ABC):
         """Read the observable state of one discovered resource."""
 
 
-class RefreshOperationABC(ABC):
-    """Base class for refresh operations.
-
-    See [`RefreshOperation`][refresh_engine.RefreshOperation] for the contract.
-    """
+class RefreshOperation(ABC):
+    """Base class for refresh operations."""
 
     @abstractmethod
     async def __call__(
@@ -222,12 +62,20 @@ class RefreshOperationABC(ABC):
         """Refresh or delete one resource."""
 
 
-class FingerprintStrategyABC(ABC):
-    """Base class for fingerprint strategies.
+type RefreshOperationCallable = Callable[
+    [
+        "Resource",
+        "ResourceSnapshot | None",
+        "PlanAction",
+        "RefreshRequest",
+    ],
+    Awaitable[None],
+]
+type RefreshOperationLike = RefreshOperation | RefreshOperationCallable
 
-    See [`FingerprintStrategy`][refresh_engine.FingerprintStrategy] for the
-    contract.
-    """
+
+class FingerprintStrategy(ABC):
+    """Base class for fingerprint strategies."""
 
     __slots__ = ()
 
@@ -236,11 +84,11 @@ class FingerprintStrategyABC(ABC):
         """Fingerprint a snapshot deterministically."""
 
 
-class StateTransactionABC(ABC):
+class StateTransaction(ABC):
     """Base class for transactions that stage changes and apply them at once.
 
     `put` and `delete` stage changes in memory; `commit` passes them to
-    [`apply_changes`][refresh_engine.StateTransactionABC.apply_changes], which
+    [`apply_changes`][refresh_engine.StateTransaction.apply_changes], which
     subclasses implement atomically. A transaction is also an asynchronous context
     manager that commits on success and rolls back when the block raises.
 
@@ -248,7 +96,7 @@ class StateTransactionABC(ABC):
 
     Example:
         ```python
-        class MyTransaction(StateTransactionABC):
+        class MyTransaction(StateTransaction):
             def __init__(self, database: Database) -> None:
                 super().__init__()
                 self._database = database
@@ -357,22 +205,19 @@ class StateTransactionABC(ABC):
             raise StateStoreError("the state transaction is already closed")
 
 
-class StateStoreABC(ABC):
-    """Base class for state stores.
-
-    See [`StateStore`][refresh_engine.StateStore] for the contract.
-    """
+class StateStore(ABC):
+    """Base class for state stores."""
 
     @abstractmethod
     async def load_all(self) -> Mapping[str, ResourceState]:
         """Return the last committed state of every resource, keyed by ID."""
 
     @abstractmethod
-    def transaction(self) -> StateTransaction:
+    async def transaction(self) -> StateTransaction:
         """Create a transaction for staging and committing changes."""
 
 
-class ResourceSelectorABC(ABC):
+class ResourceSelector(ABC):
     """Base class for selectors that supports composition with operators.
 
     Selectors combine with `&` (all must match), `|` (any must match), and `~`
@@ -392,45 +237,42 @@ class ResourceSelectorABC(ABC):
     def matches(self, resource: Resource, /) -> bool:
         """Return whether `resource` is selected."""
 
-    def __and__(self, other: ResourceSelector) -> ResourceSelectorABC:
+    def __and__(self, other: ResourceSelector) -> ResourceSelector:
         """Select resources matched by both selectors."""
         if not _is_selector(other):
             return NotImplemented
         return _AllOf((*_parts(self, _AllOf), *_parts(other, _AllOf)))
 
-    def __rand__(self, other: ResourceSelector) -> ResourceSelectorABC:
+    def __rand__(self, other: ResourceSelector) -> ResourceSelector:
         """Select resources matched by both selectors."""
         if not _is_selector(other):
             return NotImplemented
         return _AllOf((*_parts(other, _AllOf), *_parts(self, _AllOf)))
 
-    def __or__(self, other: ResourceSelector) -> ResourceSelectorABC:
+    def __or__(self, other: ResourceSelector) -> ResourceSelector:
         """Select resources matched by either selector."""
         if not _is_selector(other):
             return NotImplemented
         return selector_union(self, other)
 
-    def __ror__(self, other: ResourceSelector) -> ResourceSelectorABC:
+    def __ror__(self, other: ResourceSelector) -> ResourceSelector:
         """Select resources matched by either selector."""
         if not _is_selector(other):
             return NotImplemented
         return selector_union(other, self)
 
-    def __invert__(self) -> ResourceSelectorABC:
+    def __invert__(self) -> ResourceSelector:
         """Select resources that this selector does not match."""
         if isinstance(self, _Not):
-            return _as_abc(self.selector)
+            return self.selector
         return _Not(self)
 
 
-class MetricsSinkABC(ABC):
-    """Base class for metric sinks.
-
-    See [`MetricsSink`][refresh_engine.MetricsSink] for the contract.
-    """
+class MetricsSink(ABC):
+    """Base class for metric sinks."""
 
     @abstractmethod
-    def increment(
+    async def increment(
         self,
         name: str,
         value: int = 1,
@@ -440,7 +282,7 @@ class MetricsSinkABC(ABC):
         """Add `value` to the counter `name`."""
 
     @abstractmethod
-    def observe(
+    async def observe(
         self,
         name: str,
         value: float,
@@ -451,12 +293,12 @@ class MetricsSinkABC(ABC):
 
 
 def _is_selector(value: object) -> bool:
-    return callable(getattr(value, "matches", None))
+    return isinstance(value, ResourceSelector)
 
 
 def selector_union(
     first: ResourceSelector, second: ResourceSelector
-) -> ResourceSelectorABC:
+) -> ResourceSelector:
     """Return a selector matching resources that either selector matches."""
     return _AnyOf((*_parts(first, _AnyOf), *_parts(second, _AnyOf)))
 
@@ -469,14 +311,8 @@ def _parts(
     return (selector,)
 
 
-def _as_abc(selector: ResourceSelector) -> ResourceSelectorABC:
-    if isinstance(selector, ResourceSelectorABC):
-        return selector
-    return _AllOf((selector,))
-
-
 @dataclass(frozen=True, slots=True)
-class _AllOf(ResourceSelectorABC):
+class _AllOf(ResourceSelector):
     selectors: tuple[ResourceSelector, ...]
 
     def matches(self, resource: Resource, /) -> bool:
@@ -484,7 +320,7 @@ class _AllOf(ResourceSelectorABC):
 
 
 @dataclass(frozen=True, slots=True)
-class _AnyOf(ResourceSelectorABC):
+class _AnyOf(ResourceSelector):
     selectors: tuple[ResourceSelector, ...]
 
     def matches(self, resource: Resource, /) -> bool:
@@ -492,7 +328,7 @@ class _AnyOf(ResourceSelectorABC):
 
 
 @dataclass(frozen=True, slots=True)
-class _Not(ResourceSelectorABC):
+class _Not(ResourceSelector):
     selector: ResourceSelector
 
     def matches(self, resource: Resource, /) -> bool:

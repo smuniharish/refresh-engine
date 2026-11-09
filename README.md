@@ -33,12 +33,12 @@ plans the work in dependency order, runs it safely, and remembers the outcome.
   never deletes anything, and failed work is retried by the next refresh.
 - **Durable state.** State advances only for successful resources, in one atomic
   commit per refresh. Use the in-memory store or plug in your own database.
-- **Scheduling and overlap control.** A drift-free interval scheduler, a
-  thread-safe bridge for external schedulers, and policies that coalesce, queue,
-  skip, or supersede overlapping requests.
+- **Scheduling and overlap control.** A drift-free interval scheduler and
+  policies that coalesce, queue, skip, or supersede overlapping requests.
 - **Observability.** Typed lifecycle events with correlation IDs, structured
   logging through [structlog](https://www.structlog.org) with secret redaction,
-  and metrics.
+  metrics, and optional OpenTelemetry spans and metrics using application-owned
+  providers.
 - **Lightweight and typed.** Fully type-annotated, with two runtime
   dependencies: structlog and [tenacity](https://tenacity.readthedocs.io).
 
@@ -49,6 +49,9 @@ refresh-engine requires Python 3.12 or newer.
 ```bash
 pip install refresh-engine
 ```
+
+For the optional OpenTelemetry integration, install
+`refresh-engine[otel]`.
 
 ## Quick start
 
@@ -63,6 +66,7 @@ from refresh_engine import (
     DiscoveryResult,
     PlanAction,
     RefreshEngine,
+    ResourceSource,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
@@ -72,7 +76,7 @@ CATALOG = {"apples": 120, "pears": 80}
 SEARCH_INDEX: dict[str, int] = {}
 
 
-class InventorySource:
+class InventorySource(ResourceSource):
     async def discover(self) -> DiscoveryResult:
         return DiscoveryResult(Resource(item) for item in sorted(CATALOG))
 

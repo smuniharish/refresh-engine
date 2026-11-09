@@ -9,13 +9,14 @@ from refresh_engine import (
     RefreshConfig,
     RefreshEngine,
     RefreshMode,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
 )
 
 
-class Publisher:
+class Publisher(RefreshOperation):
     """Publish resources, failing for IDs listed in `broken`."""
 
     def __init__(self) -> None:

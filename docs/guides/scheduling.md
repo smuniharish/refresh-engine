@@ -37,29 +37,16 @@ async with engine, scheduler:
 ![Scheduler states](../assets/diagrams/scheduler-states-light.png#only-light)
 ![Scheduler states](../assets/diagrams/scheduler-states-dark.png#only-dark)
 
-## External schedulers
+## Triggering from another scheduler
 
-When refreshes are triggered by something outside the event loop, such as cron
-integration, a job framework, or a thread-based scheduler, use
-[`ExternalSchedulerAdapter`][refresh_engine.ExternalSchedulerAdapter]. Create it on
-the engine's event loop; it uses the request trigger `EXTERNAL` by default:
+When an asyncio-aware scheduler or application framework triggers a refresh, await
+the engine from its callback and set the trigger to `EXTERNAL`:
 
 ```python
-from refresh_engine import ExternalSchedulerAdapter
+from refresh_engine import TriggerSource
 
-adapter = ExternalSchedulerAdapter(engine.submit)
-
-# On the event loop:
-result = await adapter.run()
-
-# From any other thread:
-result = adapter.run_threadsafe(timeout=600)
-future = adapter.submit_threadsafe()
+result = await engine.refresh(trigger=TriggerSource.EXTERNAL)
 ```
-
-`run_threadsafe()` refuses to run on the event loop's own thread, because it would
-block the loop it waits for. When its timeout expires, the caller's wait is
-cancelled.
 
 ## Overlapping requests
 

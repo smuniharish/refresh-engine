@@ -15,27 +15,20 @@ import pytest
 from refresh_engine import (
     DiscoveryResult,
     FingerprintStrategy,
-    FingerprintStrategyABC,
     IDSelector,
     MetricsSink,
-    MetricsSinkABC,
     PlanAction,
     RefreshOperation,
-    RefreshOperationABC,
     RefreshRequest,
     Resource,
     ResourceFingerprint,
     ResourceSelector,
-    ResourceSelectorABC,
     ResourceSnapshot,
     ResourceSource,
-    ResourceSourceABC,
     ResourceState,
     StateStore,
-    StateStoreABC,
     StateStoreError,
     StateTransaction,
-    StateTransactionABC,
 )
 from refresh_engine.contracts import _Not, selector_union
 
@@ -61,58 +54,11 @@ def selected(selector: ResourceSelector) -> set[str]:
     }
 
 
-# Plain classes that satisfy the protocols without inheriting anything.
+# A custom selector used to verify ABC-based operator composition.
 
 
-class PlainSource:
-    async def discover(self) -> DiscoveryResult:
-        return DiscoveryResult([])
-
-    async def snapshot(self, resource: Resource, /) -> ResourceSnapshot:
-        return ResourceSnapshot(resource.resource_id)
-
-
-class PlainOperation:
-    async def __call__(
-        self,
-        resource: Resource,
-        snapshot: ResourceSnapshot | None,
-        action: PlanAction,
-        request: RefreshRequest,
-        /,
-    ) -> None:
-        return None
-
-
-class PlainStrategy:
-    async def fingerprint(self, snapshot: ResourceSnapshot, /) -> ResourceFingerprint:
-        return ResourceFingerprint("plain", snapshot.resource_id)
-
-
-class PlainTransaction:
-    async def put(self, state: ResourceState, /) -> None:
-        return None
-
-    async def delete(self, resource_id: str, /) -> None:
-        return None
-
-    async def commit(self) -> None:
-        return None
-
-    async def rollback(self) -> None:
-        return None
-
-
-class PlainStore:
-    async def load_all(self) -> Mapping[str, ResourceState]:
-        return {}
-
-    def transaction(self) -> StateTransaction:
-        return PlainTransaction()
-
-
-class PlainSelector:
-    """A selector that satisfies the protocol but not the ABC."""
+class PlainSelector(ResourceSelector):
+    """A selector with custom matching behavior."""
 
     def __init__(self, *resource_ids: str) -> None:
         self.resource_ids = frozenset(resource_ids)
@@ -124,30 +70,10 @@ class PlainSelector:
         return f"PlainSelector{tuple(sorted(self.resource_ids))}"
 
 
-class PlainSink:
-    def increment(
-        self,
-        name: str,
-        value: int = 1,
-        attributes: Mapping[str, str] | None = None,
-        /,
-    ) -> None:
-        return None
-
-    def observe(
-        self,
-        name: str,
-        value: float,
-        attributes: Mapping[str, str] | None = None,
-        /,
-    ) -> None:
-        return None
-
-
 # Minimal subclasses of every ABC.
 
 
-class SourceImpl(ResourceSourceABC):
+class SourceImpl(ResourceSource):
     async def discover(self) -> DiscoveryResult:
         return DiscoveryResult([])
 
@@ -155,7 +81,7 @@ class SourceImpl(ResourceSourceABC):
         return ResourceSnapshot(resource.resource_id)
 
 
-class OperationImpl(RefreshOperationABC):
+class OperationImpl(RefreshOperation):
     async def __call__(
         self,
         resource: Resource,
@@ -167,12 +93,12 @@ class OperationImpl(RefreshOperationABC):
         return None
 
 
-class StrategyImpl(FingerprintStrategyABC):
+class StrategyImpl(FingerprintStrategy):
     async def fingerprint(self, snapshot: ResourceSnapshot, /) -> ResourceFingerprint:
         return ResourceFingerprint("impl", snapshot.resource_id)
 
 
-class RecordingTransaction(StateTransactionABC):
+class RecordingTransaction(StateTransaction):
     """Records every `apply_changes` call and optionally fails it."""
 
     def __init__(self, error: Exception | None = None) -> None:
@@ -191,21 +117,21 @@ class RecordingTransaction(StateTransactionABC):
             raise self.error
 
 
-class StoreImpl(StateStoreABC):
+class StoreImpl(StateStore):
     async def load_all(self) -> Mapping[str, ResourceState]:
         return {}
 
-    def transaction(self) -> StateTransaction:
+    async def transaction(self) -> StateTransaction:
         return RecordingTransaction()
 
 
-class SelectorImpl(ResourceSelectorABC):
+class SelectorImpl(ResourceSelector):
     def matches(self, resource: Resource, /) -> bool:
         return True
 
 
-class SinkImpl(MetricsSinkABC):
-    def increment(
+class SinkImpl(MetricsSink):
+    async def increment(
         self,
         name: str,
         value: int = 1,
@@ -214,7 +140,7 @@ class SinkImpl(MetricsSinkABC):
     ) -> None:
         return None
 
-    def observe(
+    async def observe(
         self,
         name: str,
         value: float,
@@ -223,16 +149,6 @@ class SinkImpl(MetricsSinkABC):
     ) -> None:
         return None
 
-
-PROTOCOL_IMPLEMENTATIONS: list[tuple[object, type]] = [
-    (PlainSource(), ResourceSource),
-    (PlainOperation(), RefreshOperation),
-    (PlainStrategy(), FingerprintStrategy),
-    (PlainTransaction(), StateTransaction),
-    (PlainStore(), StateStore),
-    (PlainSelector("alpha"), ResourceSelector),
-    (PlainSink(), MetricsSink),
-]
 
 ABC_IMPLEMENTATIONS: list[tuple[object, type]] = [
     (SourceImpl(), ResourceSource),
@@ -246,54 +162,43 @@ ABC_IMPLEMENTATIONS: list[tuple[object, type]] = [
 
 
 @pytest.mark.parametrize(
-    ("implementation", "protocol"),
-    PROTOCOL_IMPLEMENTATIONS,
-    ids=[protocol.__name__ for _, protocol in PROTOCOL_IMPLEMENTATIONS],
+    "abc",
+    [
+        ResourceSource,
+        RefreshOperation,
+        FingerprintStrategy,
+        StateTransaction,
+        StateStore,
+        ResourceSelector,
+        MetricsSink,
+    ],
+    ids=lambda abc: abc.__name__,
 )
-def test_plain_classes_satisfy_runtime_checkable_protocols(
-    implementation: object, protocol: type
-) -> None:
-    assert isinstance(implementation, protocol)
+def test_objects_without_abc_inheritance_are_rejected(abc: type) -> None:
+    assert not isinstance(object(), abc)
 
 
 @pytest.mark.parametrize(
-    "protocol",
-    [protocol for _, protocol in PROTOCOL_IMPLEMENTATIONS],
-    ids=lambda protocol: protocol.__name__,
-)
-def test_objects_without_the_methods_do_not_satisfy_protocols(protocol: type) -> None:
-    assert not isinstance(object(), protocol)
-
-
-def test_partial_implementations_do_not_satisfy_protocols() -> None:
-    class DiscoverOnly:
-        async def discover(self) -> DiscoveryResult:
-            return DiscoveryResult([])
-
-    assert not isinstance(DiscoverOnly(), ResourceSource)
-
-
-@pytest.mark.parametrize(
-    ("implementation", "protocol"),
+    ("implementation", "abc"),
     ABC_IMPLEMENTATIONS,
     ids=[type(implementation).__name__ for implementation, _ in ABC_IMPLEMENTATIONS],
 )
-def test_abc_subclasses_satisfy_the_matching_protocol(
-    implementation: object, protocol: type
+def test_abc_subclasses_satisfy_the_matching_contract(
+    implementation: object, abc: type
 ) -> None:
-    assert isinstance(implementation, protocol)
+    assert isinstance(implementation, abc)
 
 
 @pytest.mark.parametrize(
     "abc",
     [
-        ResourceSourceABC,
-        RefreshOperationABC,
-        FingerprintStrategyABC,
-        StateTransactionABC,
-        StateStoreABC,
-        ResourceSelectorABC,
-        MetricsSinkABC,
+        ResourceSource,
+        RefreshOperation,
+        FingerprintStrategy,
+        StateTransaction,
+        StateStore,
+        ResourceSelector,
+        MetricsSink,
     ],
     ids=lambda abc: abc.__name__,
 )
@@ -303,7 +208,7 @@ def test_abstract_base_classes_require_their_abstract_methods(abc: type) -> None
 
 
 def test_subclass_missing_an_abstract_method_cannot_be_instantiated() -> None:
-    class DiscoverOnly(ResourceSourceABC):
+    class DiscoverOnly(ResourceSource):
         async def discover(self) -> DiscoveryResult:
             return DiscoveryResult([])
 
@@ -311,7 +216,7 @@ def test_subclass_missing_an_abstract_method_cannot_be_instantiated() -> None:
         cast(Any, DiscoverOnly)()
 
 
-# StateTransactionABC
+# StateTransaction
 
 
 def test_new_transaction_is_open() -> None:
@@ -420,19 +325,19 @@ async def test_commit_closes_the_transaction_even_if_apply_changes_fails() -> No
     assert len(transaction.applied) == 1
 
 
-async def put_alpha(transaction: StateTransactionABC) -> None:
+async def put_alpha(transaction: StateTransaction) -> None:
     await transaction.put(state("alpha"))
 
 
-async def delete_alpha(transaction: StateTransactionABC) -> None:
+async def delete_alpha(transaction: StateTransaction) -> None:
     await transaction.delete("alpha")
 
 
-async def commit(transaction: StateTransactionABC) -> None:
+async def commit(transaction: StateTransaction) -> None:
     await transaction.commit()
 
 
-async def rollback(transaction: StateTransactionABC) -> None:
+async def rollback(transaction: StateTransaction) -> None:
     await transaction.rollback()
 
 
@@ -441,8 +346,8 @@ async def rollback(transaction: StateTransactionABC) -> None:
     "operation", [put_alpha, delete_alpha, commit], ids=["put", "delete", "commit"]
 )
 async def test_closed_transactions_reject_further_changes(
-    close: Callable[[StateTransactionABC], Any],
-    operation: Callable[[StateTransactionABC], Any],
+    close: Callable[[StateTransaction], Any],
+    operation: Callable[[StateTransaction], Any],
 ) -> None:
     transaction = RecordingTransaction()
     await close(transaction)
@@ -538,48 +443,48 @@ async def test_context_manager_propagates_errors_after_an_explicit_rollback() ->
     assert transaction.applied == []
 
 
-# ResourceSelectorABC composition
+# ResourceSelector composition
 
 
 def test_and_selects_resources_matched_by_both_selectors() -> None:
     combined = IDSelector(["alpha", "beta"]) & IDSelector(["beta", "gamma"])
 
-    assert isinstance(combined, ResourceSelectorABC)
+    assert isinstance(combined, ResourceSelector)
     assert selected(combined) == {"beta"}
 
 
 def test_or_selects_resources_matched_by_either_selector() -> None:
     combined = IDSelector("alpha") | IDSelector("gamma")
 
-    assert isinstance(combined, ResourceSelectorABC)
+    assert isinstance(combined, ResourceSelector)
     assert selected(combined) == {"alpha", "gamma"}
 
 
 def test_invert_selects_resources_not_matched() -> None:
     inverted = ~IDSelector(["alpha", "beta"])
 
-    assert isinstance(inverted, ResourceSelectorABC)
+    assert isinstance(inverted, ResourceSelector)
     assert selected(inverted) == {"gamma", "delta"}
 
 
-def test_reflected_and_accepts_a_protocol_selector_on_the_left() -> None:
+def test_reflected_and_accepts_a_custom_abc_selector_on_the_left() -> None:
     plain = PlainSelector("alpha", "beta")
     abc = IDSelector(["beta", "gamma"])
 
     combined = cast(Any, plain) & abc
 
-    assert isinstance(combined, ResourceSelectorABC)
+    assert isinstance(combined, ResourceSelector)
     assert selected(combined) == {"beta"}
     assert repr(combined) == f"_AllOf(selectors=({plain!r}, {abc!r}))"
 
 
-def test_reflected_or_accepts_a_protocol_selector_on_the_left() -> None:
+def test_reflected_or_accepts_a_custom_abc_selector_on_the_left() -> None:
     plain = PlainSelector("alpha")
     abc = IDSelector("gamma")
 
     combined = cast(Any, plain) | abc
 
-    assert isinstance(combined, ResourceSelectorABC)
+    assert isinstance(combined, ResourceSelector)
     assert selected(combined) == {"alpha", "gamma"}
     assert repr(combined) == f"_AnyOf(selectors=({plain!r}, {abc!r}))"
 
@@ -643,16 +548,22 @@ def test_double_negation_returns_the_original_abc_selector() -> None:
     assert ~~selector is selector
 
 
-def test_negating_a_negated_protocol_selector_returns_an_abc_wrapper() -> None:
+def test_reflected_operators_accept_another_abc_selector() -> None:
+    first = IDSelector(["alpha", "beta"])
+    second = IDSelector(["beta", "gamma"])
+
+    assert selected(first.__rand__(second)) == {"beta"}
+    assert selected(first.__ror__(second)) == {"alpha", "beta", "gamma"}
+
+
+def test_negating_a_negated_custom_selector_returns_the_original_selector() -> None:
     plain = PlainSelector("alpha")
-    # Operators only negate ABC selectors, so a negation of a protocol-only
-    # selector can only be built directly.
     negated = _Not(plain)
 
     restored = ~negated
 
     assert selected(negated) == {"beta", "gamma", "delta"}
-    assert isinstance(restored, ResourceSelectorABC)
+    assert restored is plain
     assert selected(restored) == {"alpha"}
     assert selected(restored | IDSelector("beta")) == {"alpha", "beta"}
 
@@ -697,19 +608,19 @@ def test_operator_methods_return_not_implemented_for_non_selectors(
 
 
 @pytest.mark.parametrize("combine", [operator.and_, operator.or_])
-def test_operators_accept_any_object_with_a_matches_method(
+def test_operators_accept_abc_selectors(
     combine: Callable[[Any, Any], object],
 ) -> None:
     combined = combine(IDSelector("alpha"), PlainSelector("alpha"))
 
-    assert isinstance(combined, ResourceSelectorABC)
-    assert selected(cast(ResourceSelector, combined)) == {"alpha"}
+    assert isinstance(combined, ResourceSelector)
+    assert selected(combined) == {"alpha"}
 
 
-def test_selector_union_combines_protocol_selectors() -> None:
+def test_selector_union_combines_abc_selectors() -> None:
     union = selector_union(PlainSelector("alpha"), PlainSelector("delta"))
 
-    assert isinstance(union, ResourceSelectorABC)
+    assert isinstance(union, ResourceSelector)
     assert selected(union) == {"alpha", "delta"}
 
 

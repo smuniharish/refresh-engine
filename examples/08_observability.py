@@ -8,8 +8,8 @@ import structlog
 from common import DictionarySource, Recorder
 
 from refresh_engine import (
+    AsyncEventPublisher,
     EventKind,
-    EventPublisher,
     InMemoryMetrics,
     MetricsEventHandler,
     RefreshEngine,
@@ -40,7 +40,7 @@ async def main() -> None:
         ],
         wrapper_class=structlog.make_filtering_bound_logger(20),
     )
-    events = EventPublisher()
+    events = AsyncEventPublisher()
     metrics = InMemoryMetrics()
     events.subscribe(StructlogEventHandler())
     events.subscribe(MetricsEventHandler(metrics))

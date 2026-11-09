@@ -26,7 +26,7 @@ from refresh_engine import (
     RefreshStatus,
     ResourceFingerprint,
     ResourceState,
-    StateTransactionABC,
+    StateTransaction,
     canonical_digest,
 )
 from tests.support import FakeSource, RecordingOperation
@@ -49,7 +49,7 @@ class StoreMachine(RuleBasedStateMachine):
         self.store = InMemoryStateStore()
         self.model: dict[str, ResourceState] = {}
         self.staged: dict[int, tuple[dict[str, ResourceState], set[str]]] = {}
-        self.handles: dict[int, StateTransactionABC] = {}
+        self.handles: dict[int, StateTransaction] = {}
 
     def run[T](self, coroutine: Coroutine[Any, Any, T]) -> T:
         return self.loop.run_until_complete(coroutine)
@@ -57,8 +57,8 @@ class StoreMachine(RuleBasedStateMachine):
     @rule(target=transactions)
     def begin(self) -> int:
         handle = len(self.handles)
-        transaction = self.store.transaction()
-        assert isinstance(transaction, StateTransactionABC)
+        transaction = self.run(self.store.transaction())
+        assert isinstance(transaction, StateTransaction)
         self.handles[handle] = transaction
         self.staged[handle] = ({}, set())
         return handle

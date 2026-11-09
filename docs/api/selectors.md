@@ -1,7 +1,8 @@
 # Selectors
 
 Selectors compose with `&`, `|`, and `~`; see
-[`ResourceSelectorABC`][refresh_engine.ResourceSelectorABC].
+[`ResourceSelector`][refresh_engine.ResourceSelector]. Matching is synchronous;
+subclass `ResourceSelector` to implement a custom selector.
 
 ::: refresh_engine.IDSelector
 

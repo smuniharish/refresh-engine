@@ -9,7 +9,7 @@ from refresh_engine import (
     IDSelector,
     PredicateSelector,
     Resource,
-    ResourceSelectorABC,
+    ResourceSelector,
     TagSelector,
 )
 
@@ -26,7 +26,7 @@ class Expression:
     values: frozenset[str] = frozenset()
     match_all: bool = True
 
-    def build(self) -> ResourceSelectorABC:
+    def build(self) -> ResourceSelector:
         if self.operator == "ids":
             return IDSelector(self.values)
         if self.operator == "tags":

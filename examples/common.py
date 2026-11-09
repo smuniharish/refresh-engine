@@ -7,13 +7,15 @@ from collections.abc import Mapping
 from refresh_engine import (
     DiscoveryResult,
     PlanAction,
+    RefreshOperation,
     RefreshRequest,
     Resource,
     ResourceSnapshot,
+    ResourceSource,
 )
 
 
-class DictionarySource:
+class DictionarySource(ResourceSource):
     """Discover resources from a dictionary of contents.
 
     Attributes:
@@ -52,7 +54,7 @@ class DictionarySource:
         )
 
 
-class Recorder:
+class Recorder(RefreshOperation):
     """Record every operation in the order it ran."""
 
     def __init__(self) -> None:

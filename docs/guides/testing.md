@@ -17,14 +17,16 @@ from refresh_engine import (
     PlanAction,
     RefreshConfig,
     RefreshEngine,
+    RefreshOperation,
     RefreshRequest,
     RefreshStatus,
     Resource,
+    ResourceSource,
     ResourceSnapshot,
 )
 
 
-class FakeSource:
+class FakeSource(ResourceSource):
     def __init__(self, contents: dict[str, str]) -> None:
         self.contents = contents
 
@@ -37,7 +39,7 @@ class FakeSource:
         )
 
 
-class FakeDestination:
+class FakeDestination(RefreshOperation):
     def __init__(self) -> None:
         self.rows: dict[str, str] = {}
         self.broken: set[str] = set()
@@ -104,11 +106,17 @@ Subscribe a recording handler to check the exact lifecycle, or the attributes yo
 logs and dashboards rely on:
 
 ```python
-from refresh_engine import EventKind, EventPublisher, RefreshEngine, RefreshEvent
+from refresh_engine import EventKind, AsyncEventPublisher, RefreshEngine, RefreshEvent
 
-events = EventPublisher()
+events = AsyncEventPublisher()
 received: list[RefreshEvent] = []
-events.subscribe(received.append)
+
+
+async def record(event: RefreshEvent) -> None:
+    received.append(event)
+
+
+events.subscribe(record)
 
 async with RefreshEngine(source, operation, events=events) as engine:
     await engine.refresh()

@@ -10,7 +10,7 @@ Each example prints deterministic output, and the expected output is stored in
 | [`02_refresh_modes.py`](02_refresh_modes.py) | Full, targeted (IDs and composed selectors), incremental, and dependency-aware refreshes |
 | [`03_dependencies.py`](03_dependencies.py) | Dependency ordering, skipped dependents, automatic retries, deletions, and cycles |
 | [`04_fingerprints.py`](04_fingerprints.py) | Reliable cheap indicators, `ContentHash`, and a custom fingerprint strategy |
-| [`05_scheduling.py`](05_scheduling.py) | `AsyncScheduler` and refreshes requested from a thread-based scheduler |
+| [`05_scheduling.py`](05_scheduling.py) | `AsyncScheduler` and requests from an async external scheduler |
 | [`06_failure_handling.py`](06_failure_handling.py) | Retries, timeouts, partial discovery, and the fail-fast policy |
 | [`07_overlap_and_cancellation.py`](07_overlap_and_cancellation.py) | Every overlap policy, caller cancellation, and shutdown |
 | [`08_observability.py`](08_observability.py) | Structured logging with redaction, and metrics |
@@ -41,5 +41,7 @@ export REFRESH_ENGINE_POSTGRES_DSN="postgresql://postgres:postgres@localhost:543
 python 11_postgres_state_store.py
 ```
 
-From the repository root, `python scripts/run_examples.py` runs every example and
-compares its output with the expected output.
+From the repository root, `python scripts/run_examples.py` runs every available
+example and compares its output with the expected output. Use
+`python scripts/run_examples.py --strict-live` to fail when the PostgreSQL
+example cannot connect to a configured service.
