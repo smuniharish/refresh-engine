@@ -109,12 +109,32 @@ current public API. After changing the API or the skill, follow
 
 ## Releases
 
-1. Update the version in `pyproject.toml`, the skill's `metadata.version`, and
-   `CHANGELOG.md`.
-2. Merge the changes into `master` after continuous integration passes.
-3. Push a `vX.Y.Z` tag. The release workflow checks that the tag matches the
-   package version, runs the checks, and publishes to PyPI with trusted
-   publishing and attestations.
+Releases and PyPI uploads are performed manually by the maintainer. The release
+workflow only verifies and builds distributions after a GitHub release is
+published; it does not publish to PyPI.
+
+1. Update the version in `pyproject.toml`, both skills' `metadata.version` and
+   version references, and `CHANGELOG.md`. Regenerate `uv.lock`.
+2. Merge the release preparation after the required CI checks pass.
+3. Build and inspect the distributions:
+
+   ```bash
+   uv sync --locked --no-default-groups --group package
+   uv build
+   uv run --no-sync twine check --strict dist/*
+   ```
+
+4. Publish manually with maintainer credentials:
+
+   ```bash
+   uv run --no-sync twine upload dist/*
+   ```
+
+   Do not put PyPI credentials in the repository. Review the upload and verify
+   the published files on PyPI.
+5. Create the GitHub release manually with the matching `vX.Y.Z` tag and release
+   notes. The release workflow checks the tag and build, then stores the
+   distributions as a workflow artifact; it does not upload them to PyPI.
 
 ## License
 

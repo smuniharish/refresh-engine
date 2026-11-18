@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.1] - 2026-11-18
+
+### Improved
+
+- Updated compatible build, documentation, test, lint, and example dependency
+  floors to current stable releases; verified remaining declarations are current.
+- Kept PyPI publishing under maintainer control by removing the automated
+  release-workflow publish job.
+- Simplified public architecture diagrams to show conceptual flows while
+  retaining the public lifecycle and change-detection guarantees.
+
 ## [1.0.0] - 2026-11-09
 
 ### Added

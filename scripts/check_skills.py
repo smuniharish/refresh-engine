@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = ROOT / "refresh-engine-skills" / "skills"
 EXPECTED = {"refresh-engine", "refresh-engine-extend"}
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 
 
 def fail(message: str) -> None:
@@ -27,8 +31,8 @@ def check_skill(name: str, all_queries: set[str]) -> None:
         fail(f"{skill_file.relative_to(ROOT)}: unterminated YAML frontmatter")
     if not re.search(rf"(?m)^name:\s*{re.escape(name)}\s*$", header):
         fail(f"{skill_file.relative_to(ROOT)}: name must match directory")
-    if not re.search(r'(?m)^\s+version:\s*"1\.0\.0"\s*$', header):
-        fail(f"{skill_file.relative_to(ROOT)}: metadata version must be 1.0.0")
+    if not re.search(rf'(?m)^\s+version:\s*"{re.escape(VERSION)}"\s*$', header):
+        fail(f"{skill_file.relative_to(ROOT)}: metadata version must be {VERSION}")
     if not re.search(r"(?m)^description:\s*>-$", header):
         fail(f"{skill_file.relative_to(ROOT)}: description must be present")
     if not re.search(r"(?m)^license:\s*Apache-2\.0\s*$", header):

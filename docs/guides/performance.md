@@ -25,12 +25,8 @@ describes the workload and the full results.
   is neither read nor hashed.
 - **Only changed state is written.** Unchanged resources cost a comparison, not a
   database write, and an unchanged population commits nothing.
-- **Snapshots are released early.** Only snapshots of resources that will receive an
-  operation stay in memory.
-- **Bounded concurrency without overhead.** Snapshot reads and operations share a
-  fixed pool of workers rather than one task per resource.
-- **Events cost nothing without subscribers.** The engine does not build events
-  that nobody receives.
+- **Bounded concurrency.** Snapshot reads and operations stay within the configured
+  concurrency limit.
 
 ## Tuning
 
@@ -45,6 +41,3 @@ describes the workload and the full results.
   slow work into coroutine handlers or offload it to a thread.
 - **Prefer `INCREMENTAL` and targeted refreshes.** Reserve `FULL` refreshes for
   rebuilds.
-
-Discovery and change detection are linear in the number of resources, and planning
-is linear in resources plus dependencies.

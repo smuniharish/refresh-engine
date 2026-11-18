@@ -47,32 +47,3 @@ jobs:
           path: dist/
           if-no-files-found: error
           compression-level: 0
-
-  publish:
-    name: Publish exact build artifacts to PyPI
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment:
-      name: pypi
-      url: https://pypi.org/project/refresh-engine/
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: distributions
-          path: dist/
-      - name: Verify the downloaded build artifacts
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          files = list(Path("dist").iterdir())
-          wheels = [path for path in files if path.name.endswith(".whl")]
-          sdists = [path for path in files if path.name.endswith(".tar.gz")]
-          if len(files) != 2 or len(wheels) != 1 or len(sdists) != 1:
-              raise SystemExit(f"Expected exactly one wheel and sdist; found {[p.name for p in files]}")
-          PY
-      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
-        with:
-          packages-dir: dist/

@@ -1,29 +1,15 @@
-sequenceDiagram
-    autonumber
-    participant C as Caller
-    participant E as RefreshEngine
-    participant ST as StateStore
-    participant S as ResourceSource
-    participant O as RefreshOperation
+flowchart LR
+    request(["Refresh request"])
+    discover["Discover resources and load prior state"]
+    observe["Observe resources and detect changes"]
+    plan["Plan requested work"]
+    execute["Run operations with configured policies"]
+    persist["Persist successful outcomes"]
+    result(["Result and events"])
 
-    C->>E: refresh(mode, ...)
-    E->>ST: load_all()
-    ST-->>E: previous states
-    E->>S: discover()
-    S-->>E: DiscoveryResult(resources, complete)
-    loop each resource, bounded by max_concurrency
-        alt reliable cheap indicator unchanged
-            E->>E: reuse the previous state
-        else otherwise
-            E->>S: snapshot(resource)
-            S-->>E: ResourceSnapshot
-            E->>E: fingerprint and classify
-        end
-    end
-    E->>E: plan operations in dependency order
-    loop each planned resource, dependencies first
-        E->>O: operation(resource, snapshot, action, request)
-        O-->>E: success or exception, retried per RetryConfig
-    end
-    E->>ST: commit successful state in one transaction
-    E-->>C: RefreshResult
+    request --> discover --> observe --> plan --> execute --> persist --> result
+
+    classDef terminal fill:#e8eaf6,stroke:#3949ab,color:#1a237e
+    classDef step fill:#ffffff,stroke:#5c6bc0,color:#1a237e
+    class request,result terminal
+    class discover,observe,plan,execute,persist step

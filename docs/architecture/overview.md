@@ -55,9 +55,7 @@ runs in the context of the code that requested it.
 
 **A small dependency footprint.** The engine relies on the standard library, plus
 [tenacity](https://tenacity.readthedocs.io) for retries and
-[structlog](https://www.structlog.org) for structured logging. Graph algorithms,
-scheduling, and event delivery are implemented in the package and verified against
-reference models.
+[structlog](https://www.structlog.org) for structured logging.
 
 ## Guarantees
 
@@ -74,15 +72,7 @@ reference models.
    affect a refresh.
 8. Every background task is owned and stopped deterministically.
 
-These guarantees are verified by unit, integration, and property-based tests,
-including a stateful test that compares the engine with an independent model across
-thousands of generated scenarios.
-
-## Complexity
-
-For *V* discovered resources and *E* dependency edges, discovery, observation, and
-change detection take *O(V)* time, and planning takes *O(V + E)*. Memory holds one
-compact state per resource and only the snapshots of resources that are about to
-receive an operation.
+The project validates these guarantees with unit, integration, and property-based
+tests.
 
 See [Lifecycle](lifecycle.md) for the phases of a single refresh.

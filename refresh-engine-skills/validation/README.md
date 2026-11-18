@@ -16,8 +16,8 @@ queries. `agentskills validate` is the optional reference validator for the
 
 ## Review checklist
 
-1. Both skills declare version `1.0.0`; keep it aligned with the package
-   version they describe.
+1. Both skills declare the version from `pyproject.toml`; keep it aligned with the
+   package version they describe.
 2. Keep names equal to their directory names and descriptions specific enough
    to route usage questions separately from extension work.
 3. Check every API claim against the current public implementation. The API

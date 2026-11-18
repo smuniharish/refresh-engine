@@ -8,16 +8,16 @@ description: >-
   refresh-engine for ordinary application integration and async submission.
 license: Apache-2.0
 compatibility: >-
-  Python 3.12 or newer with refresh-engine 1.0.0 installed. OpenTelemetry
+  Python 3.12 or newer with refresh-engine 1.0.1 installed. OpenTelemetry
   integration is optional through refresh-engine[otel].
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   documentation: "https://refresh-engine.readthedocs.io/"
 ---
 
 # Extending refresh-engine
 
-This skill covers the extension surface planned for refresh-engine 1.0.0. The
+This skill covers the extension surface of refresh-engine 1.0.1. The
 API and code may still be settling; use the installed package's public
 signatures as the authority.
 

@@ -10,6 +10,15 @@ The skill follows the [Agent Skills specification](https://agentskills.io/specif
 and is published in the repository at
 [`refresh-engine-skills/skills/refresh-engine`](https://github.com/smuniharish/refresh-engine/tree/master/refresh-engine-skills/skills/refresh-engine).
 
+## Dependency-provided skills
+
+The runtime dependencies ([structlog](https://github.com/hynek/structlog) and
+[tenacity](https://github.com/jd/tenacity)) and optional integration packages
+([OpenTelemetry Python](https://github.com/open-telemetry/opentelemetry-python)
+and [Psycopg](https://github.com/psycopg/psycopg)) do not currently publish
+independently installable Agent Skills in their official repositories. Use the
+skills shipped with this project; the optional integrations remain optional.
+
 ## Contents
 
 | Path | Purpose |

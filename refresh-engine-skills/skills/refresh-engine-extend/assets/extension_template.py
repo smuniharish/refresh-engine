@@ -1,4 +1,4 @@
-"""Checklist-shaped custom integrations for refresh-engine 1.0.0.
+"""Checklist-shaped custom integrations for refresh-engine 1.0.1.
 
 Fill in abstract members using the installed package's public signatures.
 """
