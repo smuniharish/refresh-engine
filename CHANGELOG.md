@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Live PyPI download badges on the README and documentation home page.
+
 ## [1.0.1] - 2026-11-18
 
 ### Improved
