@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "refresh-engine"
-version = "1.0.1"
+version = "1.1.0"
 description = "Asyncio-first, domain-neutral change detection and dependency-aware refresh orchestration for Python."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -56,20 +56,20 @@ Changelog = "https://refresh-engine.readthedocs.io/en/latest/changelog/"
 
 [dependency-groups]
 test = [
-  "coverage[toml]>=7.17.3",
-  "hypothesis>=6.170.15",
+  "coverage[toml]>=7.17.5",
+  "hypothesis>=6.170.17",
   "pytest>=9.2.0",
   "pytest-asyncio>=1.5.0",
   "pytest-cov>=7.1.0",
   "pytest-timeout>=2.4.0",
   "skills-ref>=0.1.1,<1",
 ]
-lint = ["ruff>=0.17.5"]
-types = ["pyrefly>=1.4.1"]
+lint = ["ruff>=0.17.6"]
+types = ["pyrefly>=1.5.0"]
 docs = [
   "griffe-pydantic>=1.3.2,<2",
   "mkdocstrings-python>=2.0.11,<3",
-  "zensical>=0.1.2,<0.2",
+  "zensical>=0.1.3,<0.2",
 ]
 examples = [
   "psycopg[binary,pool]>=3.3.9,<4",

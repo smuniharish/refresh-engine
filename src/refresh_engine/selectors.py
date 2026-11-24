@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from refresh_engine._internal.values import id_set, require_id
+from refresh_engine._internal.values import id_set, require_id, strict_bool
 from refresh_engine.contracts import ResourceSelector
 from refresh_engine.errors import ConfigurationError
 from refresh_engine.models import Resource
@@ -83,7 +83,7 @@ class TagSelector(ResourceSelector):
         if not selected:
             raise ConfigurationError("TagSelector requires at least one tag")
         object.__setattr__(self, "tags", selected)
-        object.__setattr__(self, "match_all", match_all)
+        object.__setattr__(self, "match_all", strict_bool(match_all, "match_all"))
         object.__setattr__(self, "key", require_id(key, "key"))
 
     def matches(self, resource: Resource, /) -> bool:

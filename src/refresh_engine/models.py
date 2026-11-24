@@ -23,6 +23,7 @@ from refresh_engine._internal.values import (
     optional_timeout,
     positive_int,
     require_id,
+    strict_bool,
     text_tuple,
     utc_now,
 )
@@ -188,13 +189,19 @@ class Resource:
     Attributes:
         resource_id: Stable, unique identifier of the resource.
         metadata: Application metadata available without reading the resource.
+            Built-in containers are copied and frozen at every depth.
         version: Optional version label reported by discovery.
         dependencies: IDs of resources this resource depends on, or `None` when
             discovery does not report dependencies.
         cheap_indicator: Optional inexpensive change signal, such as an ETag or a
             modification token.
         cheap_indicator_reliable: Whether an unchanged `cheap_indicator` proves the
-            resource is unchanged, allowing the engine to skip its snapshot.
+            resource is unchanged, allowing the engine to skip its snapshot. Must be
+            a `bool`.
+
+    Raises:
+        ConfigurationError: If a field has an invalid type or `metadata` contains
+            a reference cycle.
     """
 
     resource_id: str
@@ -210,6 +217,7 @@ class Resource:
         require_id(self.resource_id, "resource_id")
         optional_text(self.version, "version")
         optional_text(self.cheap_indicator, "cheap_indicator")
+        strict_bool(self.cheap_indicator_reliable, "cheap_indicator_reliable")
         object.__setattr__(self, "metadata", freeze_mapping(self.metadata))
         object.__setattr__(
             self, "dependencies", _optional_ids(self.dependencies, "dependencies")
@@ -222,13 +230,19 @@ class ResourceSnapshot:
 
     Attributes:
         resource_id: ID of the snapshotted resource.
-        content: Resource payload passed to the refresh operation.
+        content: Resource payload passed to the refresh operation. It is kept by
+            reference and must be treated as read-only.
         metadata: Snapshot metadata, persisted with the resource state.
+            Built-in containers are copied and frozen at every depth.
         version: Optional version label; overrides the discovery version.
         version_token: Optional token that changes whenever the content changes.
         etag: Optional entity tag reported by the source.
         dependencies: IDs of resources this resource depends on, or `None` to keep
             the dependencies reported by discovery.
+
+    Raises:
+        ConfigurationError: If a field has an invalid type or `metadata` contains
+            a reference cycle.
     """
 
     resource_id: str
@@ -260,8 +274,12 @@ class DiscoveryResult:
         resources: Discovered resources, as a synchronous or asynchronous iterable.
             Asynchronous iterables are consumed as a stream.
         complete: Whether the discovery is known to contain every existing resource.
-            Only a complete discovery allows the engine to infer deletions.
+            Only a complete discovery allows the engine to infer deletions. Must be
+            a `bool`; strings and integers are rejected rather than interpreted.
         diagnostics: Human-readable notes reported as refresh warnings.
+
+    Raises:
+        ConfigurationError: If `complete` is not a `bool`.
     """
 
     resources: AsyncIterable[Resource] | Iterable[Resource]
@@ -270,7 +288,8 @@ class DiscoveryResult:
     diagnostics: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Normalize diagnostics."""
+        """Validate completeness and normalize diagnostics."""
+        strict_bool(self.complete, "complete")
         object.__setattr__(
             self, "diagnostics", text_tuple(self.diagnostics, "diagnostics")
         )
@@ -304,10 +323,15 @@ class ResourceState:
         fingerprint: Fingerprint of the snapshot that was last refreshed.
         version: Version label of that snapshot.
         cheap_indicator: Cheap change indicator reported alongside that snapshot.
-        snapshot_metadata: Metadata of that snapshot.
+        snapshot_metadata: Metadata of that snapshot. Built-in containers are
+            copied and frozen at every depth.
         dependencies: IDs of resources this resource depended on.
         refreshed_at: When the resource was last refreshed successfully. Defaults to the
             current UTC time.
+
+    Raises:
+        ConfigurationError: If a field has an invalid type or `snapshot_metadata`
+            contains a reference cycle.
     """
 
     resource_id: str
@@ -325,7 +349,9 @@ class ResourceState:
         if not isinstance(self.fingerprint, ResourceFingerprint):
             raise ConfigurationError("fingerprint must be a ResourceFingerprint")
         object.__setattr__(
-            self, "snapshot_metadata", freeze_mapping(self.snapshot_metadata)
+            self,
+            "snapshot_metadata",
+            freeze_mapping(self.snapshot_metadata, "snapshot_metadata"),
         )
         object.__setattr__(
             self, "dependencies", id_set(self.dependencies, "dependencies")
@@ -347,11 +373,13 @@ class RefreshRequest:
             mode.
         trigger: What initiated the request.
         metadata: Application metadata attached to the request.
+            Built-in containers are copied and frozen at every depth.
         correlation_id: Identifier propagated to every lifecycle event.
         requested_at: When the request was created. Defaults to the current UTC time.
 
     Raises:
-        ConfigurationError: If the mode, IDs, or selector are inconsistent.
+        ConfigurationError: If the mode, IDs, or selector are inconsistent, or
+            `metadata` contains a reference cycle.
     """
 
     mode: RefreshMode = RefreshMode.INCREMENTAL

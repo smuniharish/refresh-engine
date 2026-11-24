@@ -6,12 +6,16 @@ tracer; provider configuration and shutdown remain application-owned.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Final
 
 from opentelemetry.context import get_current
 from opentelemetry.metrics import Counter, Histogram, Meter
 from opentelemetry.trace import Span, Status, StatusCode, Tracer, set_span_in_context
 
+from refresh_engine._internal.values import strict_bool
 from refresh_engine.contracts import MetricsSink
 from refresh_engine.events import EventHandler, EventKind, RefreshEvent
 from refresh_engine.observability import MetricsEventHandler
@@ -66,6 +70,17 @@ class OpenTelemetryEventHandler(EventHandler):
     spans, which may contain application data. Refresh metadata and error
     messages are never recorded. Provider and exporter lifecycle remain owned by
     the application.
+
+    Every span the handler starts is ended. A terminal refresh event ends the
+    refresh span and every resource span of that refresh that is still open, for
+    example after a cancellation or an overall timeout interrupted the
+    operation; those resource spans get an error status and the attribute
+    ``refresh_engine.resource.interrupted``. Duplicate, late, and out-of-order
+    events are ignored, and span bookkeeping runs even when recording a metric
+    fails.
+
+    Raises:
+        ConfigurationError: If `record_identifiers` is not a `bool`.
     """
 
     def __init__(
@@ -78,37 +93,37 @@ class OpenTelemetryEventHandler(EventHandler):
     ) -> None:
         """Create an adapter around caller-owned telemetry instruments."""
         self._tracer = tracer
-        self._record_identifiers = record_identifiers
+        self._record_identifiers = strict_bool(record_identifiers, "record_identifiers")
         self._metrics = MetricsEventHandler(
             OpenTelemetryMetricsSink(meter), prefix=prefix
         )
         self._refresh_spans: dict[str, Span] = {}
-        self._resource_spans: dict[tuple[str, str], Span] = {}
+        self._resource_spans: dict[str, dict[str, Span]] = {}
+        self._finished: OrderedDict[str, None] = OrderedDict()
 
     async def __call__(self, event: RefreshEvent) -> None:
         """Translate one event to metrics and span lifecycle operations."""
-        await self._metrics(event)
-        if event.kind is EventKind.REFRESH_STARTED:
+        try:
+            await self._metrics(event)
+        finally:
+            self._trace(event)
+
+    def _trace(self, event: RefreshEvent) -> None:
+        kind = event.kind
+        if kind is EventKind.REFRESH_STARTED:
             self._start_refresh(event)
-        elif event.kind is EventKind.RESOURCE_REFRESH_STARTED:
+        elif kind is EventKind.RESOURCE_REFRESH_STARTED:
             self._start_resource(event)
-        elif event.kind in (
-            EventKind.RESOURCE_REFRESH_COMPLETED,
-            EventKind.RESOURCE_REFRESH_FAILED,
-            EventKind.RESOURCE_REFRESH_SKIPPED,
-        ):
+        elif kind in _RESOURCE_TERMINAL:
             self._finish_resource(event)
-        elif event.kind in (
-            EventKind.REFRESH_COMPLETED,
-            EventKind.REFRESH_FAILED,
-            EventKind.REFRESH_CANCELLED,
-            EventKind.REFRESH_SKIPPED,
-        ):
+        elif kind in _REFRESH_TERMINAL:
             self._finish_refresh(event)
 
     def _start_refresh(self, event: RefreshEvent) -> None:
         refresh_id = event.refresh_id
-        if refresh_id is None:
+        if refresh_id is None or refresh_id in self._finished:
+            return
+        if refresh_id in self._refresh_spans:
             return
         parent = event._context.run(get_current)
         span = self._tracer.start_span(
@@ -124,7 +139,10 @@ class OpenTelemetryEventHandler(EventHandler):
 
     def _start_resource(self, event: RefreshEvent) -> None:
         refresh_id, resource_id = event.refresh_id, event.resource_id
-        if refresh_id is None or resource_id is None:
+        if refresh_id is None or resource_id is None or refresh_id in self._finished:
+            return
+        spans = self._resource_spans.setdefault(refresh_id, {})
+        if resource_id in spans:
             return
         refresh = self._refresh_spans.get(refresh_id)
         parent_context = set_span_in_context(refresh) if refresh is not None else None
@@ -137,12 +155,14 @@ class OpenTelemetryEventHandler(EventHandler):
             span.set_attribute("refresh_engine.resource.id", resource_id)
         span.set_attribute("refresh_engine.refresh.id", refresh_id)
         _set_attributes(span, event.attributes, ("action",))
-        self._resource_spans[(refresh_id, resource_id)] = span
+        spans[resource_id] = span
 
     def _finish_resource(self, event: RefreshEvent) -> None:
-        if event.refresh_id is None or event.resource_id is None:
+        refresh_id, resource_id = event.refresh_id, event.resource_id
+        if refresh_id is None or resource_id is None:
             return
-        span = self._resource_spans.pop((event.refresh_id, event.resource_id), None)
+        spans = self._resource_spans.get(refresh_id)
+        span = spans.pop(resource_id, None) if spans is not None else None
         if span is None:
             return
         _set_attributes(
@@ -155,9 +175,19 @@ class OpenTelemetryEventHandler(EventHandler):
         span.end(end_time=_timestamp_ns(event))
 
     def _finish_refresh(self, event: RefreshEvent) -> None:
-        if event.refresh_id is None:
+        refresh_id = event.refresh_id
+        if refresh_id is None:
             return
-        span = self._refresh_spans.pop(event.refresh_id, None)
+        self._finished[refresh_id] = None
+        if len(self._finished) > _FINISHED_MEMORY:
+            self._finished.popitem(last=False)
+        end_time = _timestamp_ns(event)
+        status = _INTERRUPTED_STATUS[event.kind]
+        for span in self._resource_spans.pop(refresh_id, {}).values():
+            span.set_attribute("refresh_engine.resource.interrupted", True)
+            span.set_status(status)
+            span.end(end_time=end_time)
+        span = self._refresh_spans.pop(refresh_id, None)
         if span is None:
             return
         _set_attributes(
@@ -175,7 +205,34 @@ class OpenTelemetryEventHandler(EventHandler):
         )
         if event.kind in (EventKind.REFRESH_FAILED, EventKind.REFRESH_CANCELLED):
             span.set_status(Status(StatusCode.ERROR))
-        span.end(end_time=_timestamp_ns(event))
+        span.end(end_time=end_time)
+
+
+_FINISHED_MEMORY: Final = 1024
+_RESOURCE_TERMINAL: Final = frozenset(
+    {
+        EventKind.RESOURCE_REFRESH_COMPLETED,
+        EventKind.RESOURCE_REFRESH_FAILED,
+        EventKind.RESOURCE_REFRESH_SKIPPED,
+    }
+)
+_INTERRUPTED_STATUS: Final[Mapping[EventKind, Status]] = MappingProxyType(
+    {
+        EventKind.REFRESH_COMPLETED: Status(
+            StatusCode.ERROR, "the refresh finished before the operation reported"
+        ),
+        EventKind.REFRESH_FAILED: Status(
+            StatusCode.ERROR, "the refresh failed before the operation finished"
+        ),
+        EventKind.REFRESH_CANCELLED: Status(
+            StatusCode.ERROR, "the refresh was cancelled before the operation finished"
+        ),
+        EventKind.REFRESH_SKIPPED: Status(
+            StatusCode.ERROR, "the refresh was skipped before the operation finished"
+        ),
+    }
+)
+_REFRESH_TERMINAL: Final = frozenset(_INTERRUPTED_STATUS)
 
 
 def _timestamp_ns(event: RefreshEvent) -> int:

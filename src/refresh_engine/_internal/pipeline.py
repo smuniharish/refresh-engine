@@ -27,6 +27,8 @@ from refresh_engine._internal.observation import (
     discover,
 )
 from refresh_engine._internal.planning import build_plan
+from refresh_engine._internal.redaction import log_failure
+from refresh_engine._internal.states import check_states
 from refresh_engine.contracts import (
     FingerprintStrategy,
     RefreshOperationLike,
@@ -191,7 +193,9 @@ class RefreshPipeline:
     async def _load(self, context: RunContext) -> None:
         context.phase = RefreshPhase.PERSISTENCE
         try:
-            context.previous = await self._store.load_all()
+            context.previous = check_states(
+                await self._store.load_all(), "load_all() result"
+            )
         except Exception as error:
             context.fail_refresh(
                 RefreshPhase.PERSISTENCE,
@@ -259,7 +263,12 @@ class RefreshPipeline:
             )
             raise _StageAbortedError from error
         if not matched:
-            context.warnings.append("the selector matched no discovered resources")
+            warning = "the selector matched no discovered resources"
+            if targets:
+                count = len(targets)
+                noun = "resource was" if count == 1 else "resources were"
+                warning += f"; {count} {noun} selected by resource_ids"
+            context.warnings.append(warning)
         return targets
 
     async def _observe(self, context: RunContext) -> None:
@@ -397,10 +406,12 @@ class RefreshPipeline:
                         "was already cancelled"
                     )
                 except Exception as rollback_error:
-                    _LOGGER.error(
+                    log_failure(
+                        _LOGGER,
+                        logging.ERROR,
                         "state transaction rollback failed; preserving the "
                         "persistence error",
-                        exc_info=rollback_error,
+                        error=rollback_error,
                     )
             if not isinstance(error, Exception):
                 raise

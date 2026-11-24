@@ -91,6 +91,18 @@ class StateStoreContract(ABC):
             immutable = True
         assert immutable, "load_all() must return an immutable snapshot"
 
+    async def test_loaded_keys_match_resource_ids(self) -> None:
+        """Check that every loaded state is keyed by its own resource ID."""
+        store = await self.make_store()
+        transaction = await store.transaction()
+        for resource_id in ("alpha", "beta", "gamma"):
+            await transaction.put(_state(resource_id, "value"))
+        await transaction.commit()
+        loaded = await store.load_all()
+        assert sorted(loaded) == ["alpha", "beta", "gamma"]
+        for key, state in loaded.items():
+            assert key == state.resource_id, "keys must equal state.resource_id"
+
 
 def _state(resource_id: str, value: str) -> ResourceState:
     return ResourceState(

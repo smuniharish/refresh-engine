@@ -6,7 +6,7 @@ import math
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Final, NoReturn
 
 from refresh_engine.errors import ConfigurationError
 
@@ -18,11 +18,97 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def freeze_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    """Return an immutable shallow copy of `value`."""
+def freeze_mapping(
+    value: Mapping[str, Any] | None, name: str = "metadata"
+) -> Mapping[str, Any]:
+    """Return an immutable, recursively frozen copy of `value`.
+
+    Built-in containers are copied into immutable equivalents that still compare
+    equal to the originals and serialize the same way: `dict` and mapping
+    proxies become read-only `dict` subclasses, `list` becomes a read-only `list`
+    subclass, `set` becomes `frozenset`, and tuples are rebuilt from frozen items.
+    Any other object, including container subclasses, is kept by reference.
+
+    Raises:
+        ConfigurationError: If `value` contains a reference cycle or is nested
+            too deeply.
+    """
     if not value:
         return EMPTY_MAPPING
-    return MappingProxyType(dict(value))
+    active: set[int] = set()
+    done: dict[int, Any] = {}
+    try:
+        items = {key: _freeze(item, active, done) for key, item in dict(value).items()}
+    except _CycleError:
+        raise ConfigurationError(f"{name} must not contain reference cycles") from None
+    except RecursionError:
+        raise ConfigurationError(f"{name} is nested too deeply") from None
+    return MappingProxyType(items)
+
+
+class _CycleError(Exception):
+    pass
+
+
+def _immutable(self: object, *args: object, **kwargs: object) -> NoReturn:
+    raise TypeError(f"{type(self).__name__} is immutable")
+
+
+class FrozenDict(dict[Any, Any]):
+    """A `dict` that rejects mutation; produced by `freeze_mapping`."""
+
+    __slots__ = ()
+    __setitem__ = __delitem__ = __ior__ = _immutable
+    clear = pop = popitem = setdefault = update = _immutable
+
+    def __reduce__(self) -> tuple[type[FrozenDict], tuple[dict[Any, Any]]]:
+        """Pickle and copy through the constructor."""
+        return (FrozenDict, (dict(self),))
+
+
+class FrozenList(list[Any]):
+    """A `list` that rejects mutation; produced by `freeze_mapping`."""
+
+    __slots__ = ()
+    __setitem__ = __delitem__ = __iadd__ = __imul__ = _immutable
+    append = extend = insert = pop = remove = clear = sort = reverse = _immutable
+
+    def __reduce__(self) -> tuple[type[FrozenList], tuple[list[Any]]]:
+        """Pickle and copy through the constructor."""
+        return (FrozenList, (list(self),))
+
+
+_PASSTHROUGH: Final = frozenset(
+    {str, int, float, bool, type(None), bytes, frozenset, FrozenDict, FrozenList}
+)
+
+
+def _freeze(value: Any, active: set[int], done: dict[int, Any]) -> Any:
+    kind = type(value)
+    if kind in _PASSTHROUGH:
+        return value
+    if kind not in (dict, MappingProxyType, list, tuple, set):
+        return value
+    key = id(value)
+    frozen = done.get(key)
+    if frozen is not None:
+        return frozen
+    if key in active:
+        raise _CycleError
+    active.add(key)
+    if kind is dict or kind is MappingProxyType:
+        frozen = FrozenDict(
+            {item: _freeze(entry, active, done) for item, entry in value.items()}
+        )
+    elif kind is list:
+        frozen = FrozenList([_freeze(item, active, done) for item in value])
+    elif kind is tuple:
+        frozen = tuple(_freeze(item, active, done) for item in value)
+    else:
+        frozen = frozenset(value)
+    active.discard(key)
+    done[key] = frozen
+    return frozen
 
 
 def require_id(value: object, name: str) -> str:
@@ -88,6 +174,13 @@ def optional_timeout(value: object, name: str) -> float | None:
     if value is None:
         return None
     return number(value, name, minimum=0, exclusive=True)
+
+
+def strict_bool(value: object, name: str) -> bool:
+    """Return `value` if it is a `bool`; truthy stand-ins such as `"false"` fail."""
+    if not isinstance(value, bool):
+        raise ConfigurationError(f"{name} must be a bool, not {type(value).__name__}")
+    return value
 
 
 def positive_int(value: object, name: str) -> int:

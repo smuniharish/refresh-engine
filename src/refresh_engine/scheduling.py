@@ -10,6 +10,7 @@ from enum import StrEnum, auto
 from types import TracebackType
 from typing import Final, Self
 
+from refresh_engine._internal.redaction import log_failure
 from refresh_engine._internal.values import number
 from refresh_engine.errors import SchedulerError
 from refresh_engine.events import (
@@ -229,7 +230,9 @@ class AsyncScheduler:
             return
         error = active.exception()
         if error is not None:
-            _LOGGER.error("scheduled refresh callback failed", exc_info=error)
+            log_failure(
+                _LOGGER, logging.ERROR, "scheduled refresh callback failed", error=error
+            )
             self._publish(
                 EventKind.SCHEDULER_RUN_FAILED,
                 {"error_type": type(error).__name__},
@@ -250,5 +253,11 @@ class AsyncScheduler:
             return
         try:
             self._events.publish(RefreshEvent(kind, attributes=attributes, error=error))
-        except Exception:
-            _LOGGER.exception("failed to publish %s event", kind.value)
+        except Exception as failure:
+            log_failure(
+                _LOGGER,
+                logging.ERROR,
+                "failed to publish %s event",
+                kind.value,
+                error=failure,
+            )

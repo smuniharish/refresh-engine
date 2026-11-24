@@ -306,3 +306,9 @@ def test_selectors_compose_with_operators() -> None:
     assert selector.matches(critical) is True
     assert selector.matches(archived) is False
     assert selector.matches(Resource("delta")) is False
+
+
+@pytest.mark.parametrize("value", ["false", 0, 1, None])
+def test_tag_selector_rejects_a_non_boolean_match_all(value: object) -> None:
+    with pytest.raises(ConfigurationError, match=r"^match_all must be a bool, not "):
+        TagSelector("a", match_all=cast(Any, value))

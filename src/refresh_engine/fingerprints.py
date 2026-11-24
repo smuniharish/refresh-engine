@@ -2,12 +2,17 @@
 
 [`canonical_digest`][refresh_engine.canonical_digest] encodes a value into a
 canonical, type-tagged, length-prefixed byte string and returns its SHA-256 digest.
-Two values have the same digest exactly when they have the same canonical form:
-the same types and the same contents. Mapping insertion order and set iteration
-order are ignored, `list` and `tuple` are interchangeable, and so are `bytes`,
-`bytearray`, and `memoryview`. Digests are stable across processes, platforms, and
-Python versions. Because types are part of the encoding, `1`, `1.0`, `True`, and
-`"1"` all have different digests even though some of them compare equal.
+Two values have the same digest exactly when they have the same canonical form.
+Mapping insertion order and set iteration order are ignored; every mapping, every
+set, and every sequence encodes alike, so `list` and `tuple` are interchangeable;
+`bytes`, `bytearray`, and `memoryview` are interchangeable; subclasses of supported
+scalar types encode as their base type; and pure paths encode as their POSIX form.
+Everything else is told apart: `1`, `1.0`, `True`, and `"1"` differ, as do `0.0` and
+`-0.0`, `Decimal("1.0")` and `Decimal("1.00")`, and datetimes with different UTC
+offsets.
+
+Digests are persisted as fingerprints, so the encoding is stable across processes,
+platforms, and Python versions, and never changes within an algorithm name.
 
 Supported values are `None`, `bool`, `int`, finite `float`, `str`, `bytes`,
 `bytearray`, `memoryview`, finite `Decimal`, `UUID`, `datetime`, `date`, `time`,
@@ -33,6 +38,7 @@ from types import MappingProxyType
 from typing import Any, Final
 from uuid import UUID
 
+from refresh_engine._internal.values import FrozenDict, FrozenList
 from refresh_engine.contracts import FingerprintStrategy
 from refresh_engine.errors import FingerprintError
 from refresh_engine.models import ResourceFingerprint, ResourceSnapshot
@@ -231,7 +237,9 @@ _EXACT: Final[dict[type, _Encoder]] = {
     memoryview: _bytes,
     list: _sequence,
     tuple: _sequence,
+    FrozenList: _sequence,
     dict: _mapping,
+    FrozenDict: _mapping,
     MappingProxyType: _mapping,
     set: _set,
     frozenset: _set,
@@ -261,12 +269,17 @@ _BY_BASE: Final[tuple[tuple[type, _Encoder], ...]] = (
 )
 
 
+def _is_dataclass_type(kind: type) -> bool:
+    # A plain bool keeps type checkers from narrowing `kind` on the negative branch.
+    return dataclasses.is_dataclass(kind)
+
+
 @lru_cache(maxsize=512)
 def _encoder_for(kind: type) -> _Encoder:
     for base, encoder in _BY_BASE:
         if issubclass(kind, base):
             return encoder
-    if dataclasses.is_dataclass(kind):
+    if _is_dataclass_type(kind):
         return _dataclass
     if issubclass(kind, Mapping):
         return _mapping

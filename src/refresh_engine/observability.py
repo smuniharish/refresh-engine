@@ -8,7 +8,6 @@ without touching application code.
 
 from __future__ import annotations
 
-import re
 import threading
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -18,7 +17,12 @@ from typing import Any, Final
 import structlog
 from structlog.typing import FilteringBoundLogger
 
-from refresh_engine._internal.values import require_id
+from refresh_engine._internal.redaction import (
+    redact_exception as _redact_exception,
+)
+from refresh_engine._internal.redaction import redact_fields, withheld
+from refresh_engine._internal.redaction import redact_text as _redact_text
+from refresh_engine._internal.values import require_id, strict_bool
 from refresh_engine.contracts import MetricsSink
 from refresh_engine.errors import ConfigurationError
 from refresh_engine.events import EventHandler, EventKind, RefreshEvent
@@ -28,16 +32,9 @@ __all__ = [
     "MetricsEventHandler",
     "StructlogEventHandler",
     "default_redactor",
+    "redact_exception",
+    "redact_text",
 ]
-
-_REDACTED: Final = "[REDACTED]"
-_SENSITIVE_PARTS: Final = re.compile(
-    r"pass(?:word|wd|phrase)|secret|token|api_?key|authori[sz]ation|cookie"
-    r"|credential|private_?key|session_?(?:id|key)|bearer|connection_?string"
-)
-_SENSITIVE_WORDS: Final = re.compile(r"(?:^|_)(?:auth|pwd|dsn)(?:$|_)")
-_WORD_BOUNDARIES: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-_SEPARATORS: Final = re.compile(r"[\s.\-]+")
 
 _LOG_LEVELS: Final = frozenset({"debug", "info", "warning", "error", "critical"})
 _DEFAULT_LEVELS: Final[Mapping[EventKind, str]] = MappingProxyType(
@@ -57,6 +54,7 @@ _RESERVED_FIELDS: Final = frozenset(
         "correlation_id",
         "event",
         "exc_info",
+        "exception",
         "occurred_at",
         "refresh_id",
         "resource_id",
@@ -71,24 +69,6 @@ _TERMINAL: Final = frozenset(
     }
 )
 _CHANGES: Final = ("added", "modified", "dependency_changed", "unchanged", "deleted")
-
-
-def _is_sensitive(key: object) -> bool:
-    words = _WORD_BOUNDARIES.sub("_", str(key))
-    normalized = _SEPARATORS.sub("_", words.lower())
-    return bool(
-        _SENSITIVE_PARTS.search(normalized) or _SENSITIVE_WORDS.search(normalized)
-    )
-
-
-def _redact(value: object) -> object:
-    if isinstance(value, Mapping):
-        return default_redactor(value)
-    if isinstance(value, list):
-        return [_redact(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_redact(item) for item in value)
-    return value
 
 
 def default_redactor(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -107,10 +87,46 @@ def default_redactor(values: Mapping[str, Any]) -> dict[str, Any]:
     Returns:
         A new dictionary with sensitive values replaced.
     """
-    return {
-        key: _REDACTED if _is_sensitive(key) else _redact(value)
-        for key, value in values.items()
-    }
+    return redact_fields(values)
+
+
+def redact_text(text: str) -> str:
+    """Redact credentials embedded in free text such as exception messages.
+
+    Replaces the user information of URLs (`scheme://user:password@host`), the
+    credentials of `Bearer`, `Basic`, `Digest`, and `Token` authorization values,
+    and the values of `key=value` and `key: value` pairs whose key is
+    credential-like by the rules of
+    [`default_redactor`][refresh_engine.default_redactor], including quoted keys
+    and values as written by `repr` and JSON.
+
+    Pattern-based redaction cannot recognize every secret; a bare credential
+    without a recognizable key, URL, or authorization scheme is left unchanged.
+
+    Args:
+        text: Text to redact.
+
+    Returns:
+        The text with recognized credentials replaced by `"[REDACTED]"`.
+    """
+    return _redact_text(text)
+
+
+def redact_exception(error: BaseException) -> str:
+    """Format an exception with its traceback and redact it.
+
+    The rendering includes the exception type, the traceback, chained causes and
+    contexts, exception-group members, and notes, as printed by the `traceback`
+    module, without local variables. The result is passed through
+    [`redact_text`][refresh_engine.redact_text].
+
+    Args:
+        error: Exception to format.
+
+    Returns:
+        The redacted traceback text.
+    """
+    return _redact_exception(error)
 
 
 class StructlogEventHandler(EventHandler):
@@ -119,8 +135,14 @@ class StructlogEventHandler(EventHandler):
     Each event is logged with its kind as the event name (for example
     `refresh_completed`), the fields `refresh_id`, `resource_id`, `correlation_id`,
     and `occurred_at` when present, and the event attributes. Attributes that
-    collide with those fields are prefixed with `attr_`. Failure events carry the
-    exception as `exc_info`.
+    collide with those fields are prefixed with `attr_`.
+
+    Failure events carry their exception as the field `exception`: the traceback
+    text, including chained exceptions, after `exception_redactor` has removed
+    credentials. Exception messages often contain connection strings, tokens, or
+    request details, so the raw exception object is attached as `exc_info` only
+    when `raw_exceptions=True`; that bypasses every redactor and should be
+    enabled only when log output is as protected as the credentials themselves.
 
     The handler does not configure structlog; the application owns processors and
     rendering.
@@ -128,13 +150,19 @@ class StructlogEventHandler(EventHandler):
     Args:
         logger: Logger to use; defaults to `structlog.get_logger("refresh_engine")`.
         redactor: Function applied to every field mapping before logging.
+        exception_redactor: Function that renders a failure event's exception as
+            redacted text for the `exception` field. If it raises, the field holds
+            only the exception type.
+        raw_exceptions: Attach the unredacted exception as `exc_info` instead of
+            the `exception` field.
         levels: Log level overrides by event kind. By default, per-resource start
             and success events log at `debug`; resource failures, skipped
             operations, and cancellations at `warning`; refresh and scheduler
             failures at `error`; and everything else at `info`.
 
     Raises:
-        ConfigurationError: If a level is not a known log level.
+        ConfigurationError: If a level is not a known log level or
+            `raw_exceptions` is not a `bool`.
     """
 
     def __init__(
@@ -143,12 +171,16 @@ class StructlogEventHandler(EventHandler):
         *,
         redactor: Callable[[Mapping[str, Any]], Mapping[str, Any]] = default_redactor,
         levels: Mapping[EventKind, str] | None = None,
+        exception_redactor: Callable[[BaseException], str] = redact_exception,
+        raw_exceptions: bool = False,
     ) -> None:
         """Create a handler."""
         self._logger = (
             logger if logger is not None else structlog.get_logger("refresh_engine")
         )
         self._redactor = redactor
+        self._exception_redactor = exception_redactor
+        self._raw_exceptions = strict_bool(raw_exceptions, "raw_exceptions")
         merged = dict(_DEFAULT_LEVELS)
         for kind, level in (levels or {}).items():
             if level not in _LOG_LEVELS:
@@ -172,10 +204,23 @@ class StructlogEventHandler(EventHandler):
             fields["correlation_id"] = event.correlation_id
         fields["occurred_at"] = event.timestamp.isoformat()
         safe = dict(self._redactor(fields))
-        if event.error is not None:
-            safe["exc_info"] = event.error
+        error = event.error
+        if error is not None:
+            if self._raw_exceptions:
+                safe["exc_info"] = error
+            else:
+                safe["exception"] = self._render(error)
         log = getattr(self._logger, self._levels.get(event.kind, "info"))
         log(event.kind.value, **safe)
+
+    def _render(self, error: BaseException) -> str:
+        try:
+            rendered = self._exception_redactor(error)
+        except Exception:
+            return withheld(error)
+        if not isinstance(rendered, str):
+            return withheld(error)
+        return rendered
 
 
 class MetricsEventHandler(EventHandler):

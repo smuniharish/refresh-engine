@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import math
+import pickle
 import re
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, cast
@@ -13,6 +17,8 @@ import pytest
 from refresh_engine import ConfigurationError
 from refresh_engine._internal.values import (
     EMPTY_MAPPING,
+    FrozenDict,
+    FrozenList,
     freeze_mapping,
     id_set,
     number,
@@ -20,6 +26,7 @@ from refresh_engine._internal.values import (
     optional_timeout,
     positive_int,
     require_id,
+    strict_bool,
     text_tuple,
     utc_now,
 )
@@ -68,12 +75,150 @@ def test_freeze_mapping_returns_an_independent_read_only_copy() -> None:
         cast(Any, frozen)["key"] = "changed"
 
 
-def test_freeze_mapping_copies_shallowly() -> None:
-    nested = [1, 2]
+def test_freeze_mapping_freezes_nested_builtin_containers() -> None:
+    source: dict[str, Any] = {
+        "settings": {"enabled": True, "levels": [1, {"deep": [2]}]},
+        "tags": {"a", "b"},
+        "pair": ([1], "x"),
+        "view": MappingProxyType({"k": [3]}),
+    }
 
-    frozen = freeze_mapping({"items": nested})
+    frozen = freeze_mapping(source)
+    source["settings"]["enabled"] = False
+    source["settings"]["levels"].append(9)
+    source["tags"].add("c")
+    source["pair"][0].append(2)
 
-    assert frozen["items"] is nested
+    assert frozen == {
+        "settings": {"enabled": True, "levels": [1, {"deep": [2]}]},
+        "tags": frozenset({"a", "b"}),
+        "pair": ([1], "x"),
+        "view": {"k": [3]},
+    }
+    settings = frozen["settings"]
+    assert isinstance(settings, FrozenDict)
+    assert isinstance(settings["levels"], FrozenList)
+    assert isinstance(frozen["tags"], frozenset)
+    assert isinstance(frozen["pair"][0], FrozenList)
+    assert isinstance(frozen["view"], FrozenDict)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d.__setitem__("x", 1),
+        lambda d: d.__delitem__("enabled"),
+        lambda d: d.clear(),
+        lambda d: d.pop("enabled"),
+        lambda d: d.popitem(),
+        lambda d: d.setdefault("x", 1),
+        lambda d: d.update(x=1),
+        lambda d: d.__ior__({"x": 1}),
+    ],
+)
+def test_frozen_dict_rejects_every_mutator(mutate: Any) -> None:
+    nested = freeze_mapping({"settings": {"enabled": True}})["settings"]
+
+    with pytest.raises(TypeError, match="FrozenDict is immutable"):
+        mutate(nested)
+    assert nested == {"enabled": True}
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda v: v.__setitem__(0, 9),
+        lambda v: v.__delitem__(0),
+        lambda v: v.__iadd__([9]),
+        lambda v: v.__imul__(2),
+        lambda v: v.append(9),
+        lambda v: v.extend([9]),
+        lambda v: v.insert(0, 9),
+        lambda v: v.pop(),
+        lambda v: v.remove(1),
+        lambda v: v.clear(),
+        lambda v: v.sort(),
+        lambda v: v.reverse(),
+    ],
+)
+def test_frozen_list_rejects_every_mutator(mutate: Any) -> None:
+    nested = freeze_mapping({"items": [2, 1]})["items"]
+
+    with pytest.raises(TypeError, match="FrozenList is immutable"):
+        mutate(nested)
+    assert nested == [2, 1]
+
+
+def test_frozen_containers_serialize_pickle_and_copy_like_builtins() -> None:
+    frozen = freeze_mapping({"settings": {"items": [1, 2]}})
+
+    assert json.loads(json.dumps(dict(frozen))) == {"settings": {"items": [1, 2]}}
+    restored = pickle.loads(pickle.dumps(frozen["settings"]))  # noqa: S301
+    assert restored == {"items": [1, 2]}
+    assert isinstance(restored, FrozenDict)
+    assert isinstance(restored["items"], FrozenList)
+    assert copy.deepcopy(frozen["settings"]) == {"items": [1, 2]}
+
+
+def test_freeze_mapping_reuses_frozen_values_and_shared_references() -> None:
+    shared = [1]
+    frozen = freeze_mapping({"a": shared, "b": shared})
+    refrozen = freeze_mapping(frozen)
+
+    assert frozen["a"] is frozen["b"]
+    assert refrozen["a"] is frozen["a"]
+
+
+def test_freeze_mapping_keeps_arbitrary_objects_and_subclasses_by_reference() -> None:
+    class Payload:
+        pass
+
+    payload = Payload()
+    ordered = OrderedDict(a=[1])
+
+    frozen = freeze_mapping({"payload": payload, "ordered": ordered})
+
+    assert frozen["payload"] is payload
+    assert frozen["ordered"] is ordered
+
+
+def test_freeze_mapping_rejects_reference_cycles() -> None:
+    cycle: list[Any] = []
+    cycle.append(cycle)
+
+    with pytest.raises(
+        ConfigurationError, match=exactly("metadata must not contain reference cycles")
+    ):
+        freeze_mapping({"cycle": cycle})
+
+
+def test_freeze_mapping_rejects_excessive_nesting() -> None:
+    deep: list[Any] = []
+    for _ in range(100_000):
+        deep = [deep]
+
+    with pytest.raises(
+        ConfigurationError, match=exactly("attributes is nested too deeply")
+    ):
+        freeze_mapping({"deep": deep}, "attributes")
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_strict_bool_accepts_booleans(value: bool) -> None:
+    assert strict_bool(value, "complete") is value
+
+
+@pytest.mark.parametrize(
+    ("value", "kind"),
+    [("true", "str"), ("false", "str"), (0, "int"), (1, "int"), (None, "NoneType")],
+)
+def test_strict_bool_rejects_values_that_are_not_booleans(
+    value: object, kind: str
+) -> None:
+    with pytest.raises(
+        ConfigurationError, match=exactly(f"complete must be a bool, not {kind}")
+    ):
+        strict_bool(value, "complete")
 
 
 def test_require_id_returns_a_non_empty_string() -> None:

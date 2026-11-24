@@ -28,8 +28,10 @@ Review these points before running refresh-engine in production.
       operations, and the whole refresh.
 - [ ] [Retries](failure-handling.md#retries) cover transient errors only.
 - [ ] The [failure policy](failure-handling.md#failure-policies) matches the
-      destination: `BEST_EFFORT` for independent resources, `FAIL_FAST` for
-      all-or-nothing updates.
+      destination: `BEST_EFFORT` for independent resources, `FAIL_FAST` to stop
+      early. Neither rolls back destination changes that already succeeded.
+- [ ] Blocking I/O in sources and operations runs in threads, and no coroutine
+      blocks the event loop, so timeouts can take effect.
 - [ ] `max_concurrency` respects the rate limits of the source and the destination.
 - [ ] The [overlap policy](scheduling.md#overlapping-requests) matches how requests
       arrive.
@@ -38,7 +40,10 @@ Review these points before running refresh-engine in production.
 
 - [ ] Schedulers and engines are used with `async with`, or stopped and closed on
       shutdown, scheduler first.
-- [ ] Structured logs are enabled with a redactor that covers your metadata.
+- [ ] Structured logs are enabled with a redactor that covers your metadata, and
+      `raw_exceptions` stays disabled unless tracebacks are safe to log.
+- [ ] `events.dropped` is monitored; handlers keep up with the event rate, or the
+      publisher's `capacity` is sized for the largest refresh.
 - [ ] Metrics track refresh statuses and durations, and alerts fire on repeated
       `FAILED` or `PARTIAL` refreshes.
 - [ ] `PARTIAL` results are reviewed: their issues name the resources, phases, and

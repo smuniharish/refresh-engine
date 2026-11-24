@@ -4,6 +4,9 @@ Implement a durable state backend by subclassing `StateStore` and using the
 `StateTransaction` ABC as required by the installed public API.
 
 - `StateStore.transaction()` is awaited.
+- `load_all()` returns a mapping whose every key equals its state's
+  `resource_id`; the engine rejects any other mapping.
+- A commit applies all staged changes or none of them.
 - The reusable store contract is `refresh_engine.testing.StateStoreContract`.
 - Use the contract when checking a custom store; consult the installed
   `StateStoreContract` signatures for its test integration details.

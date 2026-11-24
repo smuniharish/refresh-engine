@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from types import MappingProxyType
 
+from refresh_engine._internal.states import check_states
 from refresh_engine.contracts import StateStore, StateTransaction
 from refresh_engine.models import ResourceState
 
@@ -21,14 +22,18 @@ class InMemoryStateStore(StateStore):
     durable store to keep state across restarts.
 
     Args:
-        initial: States to start with, keyed by resource ID.
+        initial: States to start with, keyed by resource ID. The mapping is
+            copied; each key must equal its state's `resource_id`.
+
+    Raises:
+        ConfigurationError: If `initial` is not a mapping of resource IDs to
+            matching `ResourceState` objects.
     """
 
     def __init__(self, initial: Mapping[str, ResourceState] | None = None) -> None:
         """Create a store holding `initial`."""
-        self._states: Mapping[str, ResourceState] = MappingProxyType(
-            dict(initial or {})
-        )
+        states = {} if initial is None else check_states(initial, "initial")
+        self._states: Mapping[str, ResourceState] = MappingProxyType(dict(states))
 
     async def load_all(self) -> Mapping[str, ResourceState]:
         """Return an immutable snapshot of every stored state."""

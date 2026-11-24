@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import os
 import re
+import subprocess
+import sys
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
 from pathlib import PurePosixPath, PureWindowsPath
@@ -26,6 +29,7 @@ from refresh_engine import (
     FingerprintError,
     FingerprintStrategy,
     MetadataHash,
+    Resource,
     ResourceFingerprint,
     ResourceSnapshot,
     VersionTokenFingerprint,
@@ -250,6 +254,11 @@ def test_canonical_digest_is_deterministic_for_equal_values() -> None:
         pytest.param(Color.RED, Color(1), id="enum-member"),
         pytest.param(Point(1, 2), Point(1, 2), id="dataclass"),
         pytest.param("\ud800", "\ud800", id="lone-surrogate"),
+        pytest.param(
+            Resource("r", metadata={"a": [1, {"b": {2, 3}}]}).metadata,
+            {"a": [1, {"b": {2, 3}}]},
+            id="frozen-metadata-vs-plain",
+        ),
     ],
 )
 def test_canonical_digest_is_equal_for_equivalent_values(
@@ -292,6 +301,14 @@ def test_canonical_digest_is_equal_for_equivalent_values(
         pytest.param(Decimal("1.5"), Decimal("2.5"), id="decimal-values"),
         pytest.param(Decimal("1.5"), "1.5", id="decimal-vs-str"),
         pytest.param(Decimal("1.5"), 1.5, id="decimal-vs-float"),
+        pytest.param(Decimal("1.0"), Decimal("1.00"), id="decimal-exponents"),
+        pytest.param(Decimal(0), Decimal("-0"), id="decimal-signed-zero"),
+        pytest.param(Decimal(1), 1, id="decimal-vs-int"),
+        pytest.param(
+            datetime(2024, 1, 1, 12, tzinfo=UTC),
+            datetime(2024, 1, 1, 14, tzinfo=timezone(timedelta(hours=2))),
+            id="same-instant-different-offsets",
+        ),
         pytest.param(UUID(int=1), UUID(int=2), id="uuid-values"),
         pytest.param(UUID(int=1), UUID(int=1).bytes, id="uuid-vs-bytes"),
         pytest.param(UUID(int=1), str(UUID(int=1)), id="uuid-vs-str"),
@@ -311,6 +328,26 @@ def test_canonical_digest_distinguishes_different_values(
     first: object, second: object
 ) -> None:
     assert canonical_digest(first) != canonical_digest(second)
+
+
+def test_canonical_digest_is_identical_in_processes_with_other_hash_seeds() -> None:
+    value = {"tags": {"alpha", "beta", "gamma"}, "keys": {"x": 1, "y": 2, "z": 3}}
+    script = (
+        "from refresh_engine import canonical_digest; "
+        f"print(canonical_digest({value!r}))"
+    )
+    digests = {
+        subprocess.run(  # noqa: S603
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=True,
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            text=True,
+        ).stdout.strip()
+        for seed in ("1", "2", "3")
+    }
+
+    assert digests == {canonical_digest(value)}
 
 
 def test_canonical_digest_distinguishes_integers_by_value_and_sign() -> None:

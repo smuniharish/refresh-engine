@@ -569,9 +569,9 @@ async def test_callback_failures_are_logged_published_and_do_not_stop_the_schedu
         for record in caplog.records
         if record.name == "refresh_engine" and record.levelno == logging.ERROR
     ]
-    assert record.getMessage() == "scheduled refresh callback failed"
-    assert record.exc_info is not None
-    assert record.exc_info[1] is failure
+    assert record.getMessage().startswith("scheduled refresh callback failed\n")
+    assert record.getMessage().endswith(f"ValueError: {failure}")
+    assert record.exc_info is None
     assert scheduler.state is SchedulerState.STOPPED
 
 

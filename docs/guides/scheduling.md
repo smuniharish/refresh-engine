@@ -33,6 +33,10 @@ async with engine, scheduler:
   and published as a `SCHEDULER_RUN_FAILED` event, and the schedule continues.
 - Used with `async with`, the scheduler starts on entry and stops on exit,
   cancelling the active run if the block raised.
+- The scheduler keeps time only while the event loop is free. Code that blocks the
+  loop delays every scheduled run, and `stop(cancel=True)` takes effect only when
+  the active run reaches an `await`; see
+  [Asynchronous work and timeouts](failure-handling.md#asynchronous-work-and-timeouts).
 
 ![Scheduler states](../assets/diagrams/scheduler-states-light.png#only-light)
 ![Scheduler states](../assets/diagrams/scheduler-states-dark.png#only-dark)

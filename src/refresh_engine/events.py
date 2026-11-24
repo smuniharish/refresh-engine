@@ -23,6 +23,7 @@ from enum import StrEnum, auto
 from types import MethodType
 from typing import Any, Final
 
+from refresh_engine._internal.redaction import log_failure
 from refresh_engine._internal.values import (
     freeze_mapping,
     positive_int,
@@ -129,6 +130,20 @@ class EventKind(StrEnum):
     """A scheduled callback raised an exception. Attributes: `error_type`."""
 
 
+_BOUNDARY_EVENTS: Final = frozenset(
+    {
+        EventKind.REFRESH_STARTED,
+        EventKind.REFRESH_COMPLETED,
+        EventKind.REFRESH_FAILED,
+        EventKind.REFRESH_CANCELLED,
+        EventKind.REFRESH_SKIPPED,
+        EventKind.SCHEDULER_STARTED,
+        EventKind.SCHEDULER_STOPPED,
+        EventKind.SCHEDULER_RUN_FAILED,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RefreshEvent:
     """One lifecycle event.
@@ -144,8 +159,12 @@ class RefreshEvent:
         correlation_id: Correlation ID of the originating request, if any.
         timestamp: When the event occurred, in UTC. Defaults to the current time.
         attributes: Event-specific values, documented on each
-            [`EventKind`][refresh_engine.EventKind].
+            [`EventKind`][refresh_engine.EventKind]. Built-in containers are
+            copied and frozen at every depth.
         error: The exception behind a failure event, if any.
+
+    Raises:
+        ConfigurationError: If `attributes` contains a reference cycle.
     """
 
     kind: EventKind
@@ -160,7 +179,9 @@ class RefreshEvent:
 
     def __post_init__(self) -> None:
         """Freeze the attributes."""
-        object.__setattr__(self, "attributes", freeze_mapping(self.attributes))
+        object.__setattr__(
+            self, "attributes", freeze_mapping(self.attributes, "attributes")
+        )
 
 
 class EventHandler(ABC):
@@ -216,12 +237,24 @@ class EventPublisher(ABC):
 class AsyncEventPublisher(EventPublisher):
     """Deliver events to handlers in publication order from a background task.
 
-    Every handler receives every event in publication order, and handlers receive
-    each event in subscription order. Handler exceptions are logged to the
-    `refresh_engine` standard-library logger and kept in
+    Every handler receives every delivered event in publication order, and
+    handlers receive each event in subscription order. Handler exceptions are
+    logged to the `refresh_engine` standard-library logger and kept in
     [`errors`][refresh_engine.AsyncEventPublisher.errors]; they never reach the code
     that published the event. Publishing is a no-op while there are no
     subscribers.
+
+    The queue of undelivered events is bounded, so a slow handler can neither
+    block a refresh nor grow memory without limit. While `capacity` events are
+    waiting, newly published events are dropped, except for refresh boundary
+    events (`REFRESH_STARTED`, the terminal `REFRESH_*` events, and scheduler
+    events), which may use up to
+    [`BOUNDARY_RESERVE`][refresh_engine.AsyncEventPublisher.BOUNDARY_RESERVE]
+    additional slots. Dropped events are counted in
+    [`dropped`][refresh_engine.AsyncEventPublisher.dropped], and the first drop
+    of each saturation episode is logged as a warning. Delivery is therefore
+    best-effort under sustained overload; boundary events are retained unless the
+    reserve is exhausted as well.
 
     Handlers run in the publisher's background task with a fresh context, so
     context variables of the code that published an event are not visible to
@@ -232,20 +265,29 @@ class AsyncEventPublisher(EventPublisher):
 
     Args:
         max_errors: Number of most recent handler exceptions to keep.
+        capacity: Maximum number of undelivered events, not counting the reserve
+            for boundary events.
 
     Raises:
-        ConfigurationError: If `max_errors` is less than 1.
+        ConfigurationError: If `max_errors` or `capacity` is less than 1.
     """
 
-    def __init__(self, *, max_errors: int = 100) -> None:
+    BOUNDARY_RESERVE: Final = 1024
+    """Extra queue slots available only to refresh boundary events."""
+
+    def __init__(self, *, max_errors: int = 100, capacity: int = 100_000) -> None:
         """Create a publisher without subscribers."""
         self._handlers: tuple[EventHandlerLike, ...] = ()
         self._lock = threading.Lock()
+        self._capacity = positive_int(capacity, "capacity")
         self._queue: deque[RefreshEvent] = deque()
         self._dispatcher: asyncio.Task[None] | None = None
         self._errors: deque[Exception] = deque(
             maxlen=positive_int(max_errors, "max_errors")
         )
+        self._dropped = 0
+        self._peak = 0
+        self._saturated = False
 
     @property
     def has_subscribers(self) -> bool:
@@ -256,6 +298,26 @@ class AsyncEventPublisher(EventPublisher):
     def errors(self) -> tuple[Exception, ...]:
         """The most recent exceptions raised by handlers, oldest first."""
         return tuple(self._errors)
+
+    @property
+    def capacity(self) -> int:
+        """Maximum number of undelivered events, excluding the boundary reserve."""
+        return self._capacity
+
+    @property
+    def queued(self) -> int:
+        """Number of events published but not yet taken for delivery."""
+        return len(self._queue)
+
+    @property
+    def peak_queued(self) -> int:
+        """Largest number of undelivered events observed so far."""
+        return self._peak
+
+    @property
+    def dropped(self) -> int:
+        """Number of events dropped because the queue was full."""
+        return self._dropped
 
     def subscribe(self, handler: EventHandlerLike) -> None:
         """Register `handler`; subscribing the same handler twice has no effect.
@@ -287,47 +349,82 @@ class AsyncEventPublisher(EventPublisher):
     def publish(self, event: RefreshEvent) -> None:
         """Queue `event` for delivery to the current subscribers.
 
+        Drops `event` instead when the queue is full; see the class description.
+
         Raises:
             RuntimeError: If called without a running event loop while there are
                 subscribers.
         """
         if not self._handlers:
             return
-        self._queue.append(event)
+        queue = self._queue
+        size = len(queue)
+        limit = self._capacity
+        if event.kind in _BOUNDARY_EVENTS:
+            limit += self.BOUNDARY_RESERVE
+        if size >= limit:
+            self._dropped += 1
+            if not self._saturated:
+                self._saturated = True
+                _LOGGER.warning(
+                    "refresh event queue is full (capacity %d); dropping events "
+                    "until handlers catch up",
+                    self._capacity,
+                )
+        else:
+            queue.append(event)
+            if size >= self._peak:
+                self._peak = size + 1
         dispatcher = self._dispatcher
         if dispatcher is None or dispatcher.done():
-            self._dispatcher = asyncio.get_running_loop().create_task(
-                self._dispatch(),
-                name="refresh-engine-event-dispatcher",
-                context=Context(),
-            )
+            self._start()
 
     async def drain(self) -> None:
         """Wait until every queued event has been delivered.
 
         Awaited directly by a handler, `drain` returns immediately; the remaining
-        events are delivered after the handler returns.
+        events are delivered after the handler returns. If delivery was
+        interrupted, for example because the background task was cancelled, the
+        remaining events are delivered by a new background task.
         """
-        while (dispatcher := self._dispatcher) is not None and not dispatcher.done():
+        while True:
+            dispatcher = self._dispatcher
+            if dispatcher is None or dispatcher.done():
+                if not self._queue or not self._handlers:
+                    return
+                dispatcher = self._start()
             if dispatcher is asyncio.current_task():
                 return
             await asyncio.wait((dispatcher,))
 
+    def _start(self) -> asyncio.Task[None]:
+        dispatcher = asyncio.get_running_loop().create_task(
+            self._dispatch(),
+            name="refresh-engine-event-dispatcher",
+            context=Context(),
+        )
+        self._dispatcher = dispatcher
+        return dispatcher
+
     async def _dispatch(self) -> None:
         delivered = 0
-        while self._queue:
-            event = self._queue.popleft()
+        queue = self._queue
+        while queue:
+            event = queue.popleft()
             for handler in self._handlers:
                 try:
                     await handler(event)
                 except Exception as error:
                     self._errors.append(error)
-                    _LOGGER.warning(
+                    log_failure(
+                        _LOGGER,
+                        logging.WARNING,
                         "refresh event handler %r failed for %s event",
                         handler,
                         event.kind.value,
-                        exc_info=error,
+                        error=error,
                     )
             delivered += 1
             if delivered % _YIELD_EVERY == 0:
                 await asyncio.sleep(0)
+        self._saturated = False

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -11,8 +12,14 @@ from time import perf_counter
 from typing import Any, Final
 from uuid import uuid4
 
+from refresh_engine._internal.redaction import log_failure
 from refresh_engine._internal.values import EMPTY_MAPPING, utc_now
-from refresh_engine.events import EventKind, EventPublisher, RefreshEvent
+from refresh_engine.events import (
+    AsyncEventPublisher,
+    EventKind,
+    EventPublisher,
+    RefreshEvent,
+)
 from refresh_engine.models import (
     FailurePolicy,
     RefreshIssue,
@@ -148,6 +155,20 @@ class Emitter:
         """Whether a published event can reach a handler."""
         return self._publisher.has_subscribers
 
+    async def cooperate(self) -> None:
+        """Yield once to the event loop while the built-in publisher is backlogged.
+
+        Operations that never suspend would otherwise publish a whole refresh
+        before the publisher's delivery task can run. Yielding never waits for
+        handlers, so a slow handler cannot hold up the refresh.
+        """
+        publisher = self._publisher
+        if (
+            isinstance(publisher, AsyncEventPublisher)
+            and publisher.queued * 2 >= publisher.capacity
+        ):
+            await asyncio.sleep(0)
+
     def __call__(
         self,
         kind: EventKind,
@@ -171,8 +192,14 @@ class Emitter:
                     error=error,
                 )
             )
-        except Exception:
-            _LOGGER.exception("failed to publish %s event", kind.value)
+        except Exception as failure:
+            log_failure(
+                _LOGGER,
+                logging.ERROR,
+                "failed to publish %s event",
+                kind.value,
+                error=failure,
+            )
 
 
 @dataclass(slots=True, eq=False)

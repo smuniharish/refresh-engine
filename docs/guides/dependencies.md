@@ -16,8 +16,11 @@ ResourceSnapshot("report", content=..., dependencies={"sales", "regions"})
 
 - Leave `dependencies` as `None` when a source does not know them. A snapshot's
   dependencies take precedence over discovery's.
-- When a resource is matched by its cheap indicator, its stored dependencies are
-  kept unless discovery declares new ones.
+- When a resource is matched by its cheap indicator, no snapshot is read, so its
+  stored dependencies are kept unless discovery declares new ones. Dependencies
+  declared only in snapshots are therefore refreshed only when the cheap indicator
+  changes; declare them in discovery when the source knows them, or make the
+  indicator cover them. See [Cheap indicators](change-detection.md#cheap-indicators).
 - Dependencies on unknown IDs are allowed; they simply never trigger anything.
 
 When only the dependencies of a resource change, it is classified as

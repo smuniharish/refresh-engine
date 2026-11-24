@@ -28,6 +28,13 @@ memory. Loading returns an immutable snapshot in constant time, and commits repl
 the stored mapping atomically. State is lost when the process exits, so the first
 refresh after a restart treats every resource as added.
 
+The store can start from existing states. Every key must equal the `resource_id` of
+its state; any other entry raises a `ConfigurationError`:
+
+```python
+store = InMemoryStateStore({state.resource_id: state for state in saved_states})
+```
+
 ## Durable stores
 
 To keep state across restarts, implement
@@ -73,7 +80,12 @@ class DatabaseTransaction(StateTransaction):
 
 Rules for a correct store:
 
-- **Atomic commits.** Apply all staged changes or none of them.
+- **Atomic commits.** Apply all staged changes or none of them. A cancelled or
+  failed commit must leave the previous states intact.
+- **Key by resource ID.** `load_all()` returns a mapping whose every key equals the
+  `resource_id` of its state. The engine validates the loaded mapping and fails the
+  refresh in the `persistence` phase if a value is not a `ResourceState` or a key
+  does not match, instead of comparing resources against the wrong states.
 - **Raise on failure.** Raise [`StateStoreError`][refresh_engine.StateStoreError] or
   any exception; the engine rolls the transaction back and reports the refresh as
   failed.
@@ -95,7 +107,7 @@ async with await store.transaction() as transaction:
 
 The reusable [`StateStoreContract`][refresh_engine.testing.StateStoreContract]
 provides async tests for insertion, overwrite, deletion, rollback, context-manager
-behavior, and immutable snapshots. Subclass it in your test suite and implement
+behavior, key identity, and immutable snapshots. Subclass it in your test suite and implement
 `make_store()` to return a fresh instance. Import the class from
 `refresh_engine.testing`:
 

@@ -434,3 +434,78 @@ async def test_cheap_matching_yields_to_the_event_loop_periodically(
         result = await engine.refresh()
     assert result.unchanged_count == 3_000
     assert yields == 2
+
+
+async def test_empty_selector_alongside_matching_ids_warns_with_context() -> None:
+    operation = RecordingOperation()
+    async with RefreshEngine(FakeSource({"a": 1, "b": 2}), operation) as engine:
+        one = await engine.refresh(resource_ids="a", selector=TagSelector("missing"))
+        two = await engine.refresh(
+            resource_ids=["a", "b", "a"], selector=TagSelector("missing")
+        )
+    assert one.warnings == (
+        "the selector matched no discovered resources; "
+        "1 resource was selected by resource_ids",
+    )
+    assert two.warnings == (
+        "the selector matched no discovered resources; "
+        "2 resources were selected by resource_ids",
+    )
+    assert sorted(operation.ids()) == ["a", "a", "b"]
+
+
+async def test_selector_matching_while_ids_match_nothing_warns_about_the_ids() -> None:
+    operation = RecordingOperation()
+    async with RefreshEngine(
+        FakeSource({"a": 1}, tags={"a": ["hot"]}), operation
+    ) as engine:
+        result = await engine.refresh(resource_ids="ghost", selector=TagSelector("hot"))
+    assert result.warnings == ("targeted resources were not discovered: 'ghost'",)
+    assert operation.ids() == ["a"]
+
+
+async def test_neither_ids_nor_selector_matching_reports_both() -> None:
+    operation = RecordingOperation()
+    async with RefreshEngine(FakeSource({"a": 1}), operation) as engine:
+        result = await engine.refresh(
+            resource_ids="ghost", selector=TagSelector("missing")
+        )
+    assert result.warnings == (
+        "the selector matched no discovered resources",
+        "targeted resources were not discovered: 'ghost'",
+    )
+    assert operation.calls == []
+
+
+async def test_targeted_refresh_of_an_empty_discovery_reports_everything() -> None:
+    async with RefreshEngine(FakeSource({}), RecordingOperation()) as engine:
+        by_selector = await engine.refresh(selector=TagSelector("hot"))
+        by_ids = await engine.refresh(resource_ids="a")
+    assert by_selector.warnings == ("the selector matched no discovered resources",)
+    assert by_ids.warnings == ("targeted resources were not discovered: 'a'",)
+
+
+async def test_snapshot_only_dependency_changes_need_a_changed_cheap_indicator() -> (
+    None
+):
+    source = FakeSource(
+        {"base": 1, "other": 1, "derived": 1},
+        dependencies={"derived": {"base"}},
+        dependencies_in_snapshot=True,
+        cheap=True,
+    )
+    operation = RecordingOperation()
+    async with RefreshEngine(source, operation) as engine:
+        await engine.refresh()
+        source.dependencies["derived"] = {"other"}
+        unchanged_indicator = await engine.refresh()
+        kept = (await engine.store.load_all())["derived"].dependencies
+        source.values["derived"] = 2
+        operation.calls.clear()
+        changed_indicator = await engine.refresh()
+        replaced = (await engine.store.load_all())["derived"].dependencies
+    assert unchanged_indicator.refreshed_count == 0
+    assert kept == {"base"}
+    assert changed_indicator.modified_count == 1
+    assert operation.calls == [(REFRESH, "derived")]
+    assert replaced == {"other"}

@@ -1,0 +1,76 @@
+{
+  "environment": {
+    "refresh_engine": "1.0.1",
+    "commit": "8abc5dceed608497790820ec767139102dbcd754-dirty",
+    "python": "3.15.2",
+    "implementation": "CPython",
+    "platform": "Windows-11-10.0.26100-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "logical_cpus": 20,
+    "physical_memory_bytes": 68111441920,
+    "date": "2026-11-24"
+  },
+  "options": {
+    "repeat": 1,
+    "payload_bytes": 1024,
+    "concurrency": 10,
+    "phases": true,
+    "memory": true
+  },
+  "fingerprint_seconds_per_resource": 6.527300000016112e-06,
+  "results": [
+    {
+      "size": 1000000,
+      "profile": "unchanged",
+      "repeat": 1,
+      "seconds_median": 6.192682300000342,
+      "seconds_samples": [
+        6.192682300000342
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 1000000,
+      "discovery_seconds": 1.7903711000008116,
+      "snapshot_seconds": 3.4797496000001047,
+      "detection_and_planning_seconds": 0.262688,
+      "peak_memory_bytes": 368967991
+    },
+    {
+      "size": 1000000,
+      "profile": "thousand",
+      "repeat": 1,
+      "seconds_median": 6.510993099999723,
+      "seconds_samples": [
+        6.510993099999723
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 999000,
+      "discovery_seconds": 1.4790247999999337,
+      "snapshot_seconds": 3.4335743999999977,
+      "execution_seconds": 0.015935099999296654,
+      "persistence_seconds": 0.42221019999942655,
+      "detection_and_planning_seconds": 0.326302,
+      "peak_memory_bytes": 390815979
+    },
+    {
+      "size": 1000000,
+      "profile": "full",
+      "repeat": 1,
+      "seconds_median": 48.57526109999981,
+      "seconds_samples": [
+        48.57526109999981
+      ],
+      "status": "success",
+      "refreshed": 1000000,
+      "unchanged": 1000000,
+      "discovery_seconds": 1.821484899999632,
+      "snapshot_seconds": 19.65534580000076,
+      "execution_seconds": 12.655375999999706,
+      "persistence_seconds": 1.7570310999999492,
+      "detection_and_planning_seconds": 4.576468,
+      "peak_memory_bytes": 1588830159
+    }
+  ]
+}

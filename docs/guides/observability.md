@@ -72,6 +72,33 @@ or break a refresh:
   itself; use `engine.close(wait=False)` there;
 - without subscribers, the engine does not even build events.
 
+### Capacity and overload
+
+The queue of undelivered events is bounded, so a slow handler can neither block a
+refresh nor grow memory without limit:
+
+```python
+events = AsyncEventPublisher(capacity=100_000)  # the default
+```
+
+- While `capacity` events are waiting, newly published events are dropped; the
+  oldest queued events are kept, so delivered events stay in publication order.
+- Refresh boundary events (`REFRESH_STARTED`, the four terminal `REFRESH_*` events,
+  and scheduler events) may use up to `AsyncEventPublisher.BOUNDARY_RESERVE` (1024)
+  further slots, so they survive a burst of resource events.
+- `events.dropped` counts dropped events, `events.queued` and `events.peak_queued`
+  report the backlog, and the first drop of each overload episode is logged as a
+  warning to the `refresh_engine` logger.
+- While the queue is at least half full, the engine yields to the event loop after
+  each operation, so handlers that keep up are not starved by operations that never
+  suspend.
+
+Delivery is therefore best-effort under sustained overload: a handler that is slower
+than the refresh loses resource events, and if the reserve is exhausted as well,
+boundary events. Size `capacity` for the largest refresh, keep handlers fast, and
+alert on `dropped`. `drain()` delivers whatever is queued; events that were dropped
+are not delivered later.
+
 ## Structured logging
 
 [`StructlogEventHandler`][refresh_engine.StructlogEventHandler] logs every event
@@ -86,8 +113,8 @@ events.subscribe(StructlogEventHandler())
 
 - The event name is the event kind, for example `refresh_completed`.
 - Fields are the refresh, resource, and correlation IDs, `occurred_at`, and the
-  event attributes. Failures carry the exception as `exc_info`, so tracebacks
-  render with your structlog configuration.
+  event attributes. Failures carry an `exception` field with the redacted
+  traceback; see [Exceptions](#exceptions).
 - Per-resource start and success events log at `debug`; resource failures, skipped
   operations, and cancellations at `warning`; refresh and scheduler failures at
   `error`; and everything else at `info`. Override levels with
@@ -100,6 +127,37 @@ Every field passes through a redactor first. The default,
 credential-like keys, such as `password`, `token`, `api_key`, `authorization`,
 `cookie`, or `dsn`, in any naming style and at any nesting depth. Pass your own
 `redactor` to extend it.
+
+### Exceptions
+
+Exception messages often contain secrets, such as a connection URL with a password
+or an HTTP error that echoes a header. Redacting fields does not reach them, so the
+handler renders the exception itself:
+
+- By default, [`redact_exception`][refresh_engine.redact_exception] formats the full
+  traceback, including chained exceptions, exception groups, and notes, and passes
+  it through [`redact_text`][refresh_engine.redact_text]. The exception type, the
+  stack, and every non-sensitive part of the message are kept.
+- `redact_text` removes values of credential-like keys written as `key=value`,
+  `key: value`, or quoted JSON and Python mappings, credentials of `Bearer`,
+  `Basic`, `Digest`, and `Token` authorization values, and the user information of
+  URLs such as `postgresql://user:password@host`.
+- Pass `exception_redactor=` to render exceptions your own way. If it raises or
+  returns something other than a string, the handler logs only the exception type
+  and a note that the details were withheld, never the original text.
+- `raw_exceptions=True` attaches the unredacted exception as `exc_info` instead, so
+  your structlog configuration renders it. It bypasses every redactor; enable it
+  only where tracebacks are known to be safe.
+
+Diagnostics that the package logs to the standard-library `refresh_engine` logger,
+such as handler, callback, and rollback failures, include tracebacks redacted the
+same way.
+
+Redaction is pattern-based and therefore best-effort. It cannot recognize a secret
+that appears without a recognizable key, scheme, or URL, for example a bare token
+in free text, and local variable values are never rendered. Avoid putting secrets
+into exception messages, and extend the redactor when your clients format them in
+other ways.
 
 ## Metrics
 
@@ -146,7 +204,15 @@ creates one span per refresh and resource operation and reports the metrics abov
 By default, spans carry only bounded attributes and the generated refresh ID. Pass
 `record_identifiers=True` to also record resource and correlation IDs on spans;
 enable it only when those IDs are safe to export. Refresh metadata and error
-messages are never recorded. If you implement your own sink, both methods must be asynchronous; the API reference
+messages are never recorded.
+
+Every resource span is ended exactly once. When a refresh ends while resource
+operations are still open, for example after a cancellation or an overall timeout,
+its terminal event ends those spans with an error status and the attribute
+`refresh_engine.resource.interrupted`. Duplicate, late, and out-of-order events
+are ignored, and a failing metric instrument never prevents a span from ending.
+
+If you implement your own sink, both methods must be asynchronous; the API reference
 documents their signatures.
 
 [`InMemoryMetrics`][refresh_engine.InMemoryMetrics] is a thread-safe sink for tests

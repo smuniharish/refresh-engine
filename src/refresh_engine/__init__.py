@@ -75,6 +75,8 @@ from refresh_engine.observability import (
     MetricsEventHandler,
     StructlogEventHandler,
     default_redactor,
+    redact_exception,
+    redact_text,
 )
 from refresh_engine.scheduling import (
     AsyncScheduler,
@@ -147,4 +149,6 @@ __all__ = [
     "VersionTokenFingerprint",
     "canonical_digest",
     "default_redactor",
+    "redact_exception",
+    "redact_text",
 ]

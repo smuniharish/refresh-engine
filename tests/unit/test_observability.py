@@ -16,6 +16,7 @@ import structlog
 from structlog.testing import LogCapture, capture_logs
 
 from refresh_engine import (
+    AsyncEventPublisher,
     ConfigurationError,
     EventKind,
     InMemoryMetrics,
@@ -24,6 +25,8 @@ from refresh_engine import (
     RefreshEvent,
     StructlogEventHandler,
     default_redactor,
+    redact_exception,
+    redact_text,
 )
 
 REDACTED = "[REDACTED]"
@@ -288,6 +291,7 @@ def test_structlog_handler_merges_attributes() -> None:
         "correlation_id",
         "occurred_at",
         "exc_info",
+        "exception",
     ],
 )
 def test_structlog_handler_prefixes_reserved_attribute_keys(key: str) -> None:
@@ -349,21 +353,207 @@ def test_structlog_handler_applies_a_custom_redactor_to_every_field() -> None:
     ]
     logged = {key: entry[key] for key in ("visible", "password")}
     assert logged == {"visible": "hidden", "password": "kept"}
-    assert entry["exc_info"] is error
+    assert entry["exception"] == "ValueError: boom"
+    assert "exc_info" not in entry
 
 
-def test_structlog_handler_attaches_the_error_as_exc_info() -> None:
-    error = RuntimeError("operation failed")
+def raised(error: BaseException) -> BaseException:
+    try:
+        raise error
+    except BaseException as caught:
+        return caught
+
+
+def test_structlog_handler_logs_a_non_sensitive_exception_with_its_traceback() -> None:
+    error = raised(RuntimeError("operation failed for resource 7"))
 
     entry = log_one(RefreshEvent(EventKind.RESOURCE_REFRESH_FAILED, error=error))
 
+    exception = entry["exception"]
+    assert exception.startswith("Traceback (most recent call last):\n")
+    assert "in raised" in exception
+    assert exception.endswith("RuntimeError: operation failed for resource 7")
+    assert "exc_info" not in entry
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("login failed: password=hunter2 user=bob", "password=[REDACTED] user=bob"),
+        ("api_key=abc123&page=2", "api_key=[REDACTED]&page=2"),
+        ("refresh token: 'tok-9' expired", "token: '[REDACTED]' expired"),
+        (
+            "cannot connect to postgresql://app:s3cret@db:5432/main",
+            "postgresql://[REDACTED]@db:5432/main",
+        ),
+        (
+            "header Authorization: Bearer eyJ.abc",
+            "Authorization: [REDACTED] [REDACTED]",
+        ),
+        ("{'secret': 'x', 'mode': 'full'}", "{'secret': '[REDACTED]', 'mode': 'full'}"),
+        ('{"accessToken": "x y"}', '{"accessToken": "[REDACTED]"}'),
+    ],
+)
+def test_structlog_handler_redacts_credentials_in_exception_messages(
+    message: str, expected: str
+) -> None:
+    secret_free = log_one(
+        RefreshEvent(EventKind.REFRESH_FAILED, error=raised(RuntimeError(message)))
+    )["exception"]
+
+    assert secret_free.endswith(expected)
+    assert "\nRuntimeError: " in secret_free
+    for secret in ("hunter2", "abc123", "tok-9", "s3cret", "eyJ.abc", "x y"):
+        assert secret not in secret_free
+
+
+def test_structlog_handler_redacts_every_exception_in_a_chain() -> None:
+    try:
+        try:
+            raise OSError("dsn=postgresql://u:pw1@h/db")
+        except OSError as inner:
+            raise RuntimeError("retry with token=pw2 failed") from inner
+    except RuntimeError as outer:
+        error = outer
+    group = ExceptionGroup("several", [ValueError("password: pw3")])
+    error.add_note("note with secret=pw4")
+
+    chained = log_one(RefreshEvent(EventKind.REFRESH_FAILED, error=error))
+    grouped = log_one(RefreshEvent(EventKind.REFRESH_FAILED, error=group))
+
+    text = chained["exception"] + grouped["exception"]
+    assert "OSError: dsn=[REDACTED]" in text
+    assert "The above exception was the direct cause" in text
+    assert "RuntimeError: retry with token=[REDACTED] failed" in text
+    assert "note with secret=[REDACTED]" in text
+    assert "ValueError: password: [REDACTED]" in text
+    for secret in ("pw1", "pw2", "pw3", "pw4"):
+        assert secret not in text
+
+
+def test_structlog_handler_uses_a_custom_exception_redactor() -> None:
+    seen: list[BaseException] = []
+
+    def summarize(error: BaseException) -> str:
+        seen.append(error)
+        return type(error).__name__
+
+    error = RuntimeError("password=hunter2")
+    entry = log_one(
+        RefreshEvent(EventKind.REFRESH_FAILED, error=error),
+        exception_redactor=summarize,
+    )
+
+    assert entry["exception"] == "RuntimeError"
+    assert seen == [error]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        lambda error: (_ for _ in ()).throw(RuntimeError(f"echo {error}")),
+        lambda error: cast(Any, error),
+    ],
+    ids=["raises", "not-text"],
+)
+def test_a_failing_exception_redactor_never_exposes_the_message(broken: Any) -> None:
+    error = KeyError("password=hunter2")
+
+    entry = log_one(
+        RefreshEvent(EventKind.REFRESH_FAILED, error=error), exception_redactor=broken
+    )
+
+    assert entry["exception"] == "KeyError: [message withheld: redaction failed]"
+    assert "hunter2" not in repr(entry)
+
+
+def test_structlog_handler_attaches_raw_exceptions_only_when_asked() -> None:
+    error = RuntimeError("password=hunter2")
+
+    entry = log_one(
+        RefreshEvent(EventKind.RESOURCE_REFRESH_FAILED, error=error),
+        raw_exceptions=True,
+    )
+
     assert entry["exc_info"] is error
+    assert "exception" not in entry
 
 
-def test_structlog_handler_omits_exc_info_without_an_error() -> None:
+def test_structlog_handler_rejects_a_non_boolean_raw_exceptions() -> None:
+    with pytest.raises(
+        ConfigurationError, match=r"^raw_exceptions must be a bool, not str$"
+    ):
+        StructlogEventHandler(raw_exceptions=cast(Any, "false"))
+
+
+def test_structlog_handler_omits_the_exception_without_an_error() -> None:
     entry = log_one(RefreshEvent(EventKind.REFRESH_FAILED))
 
+    assert "exception" not in entry
     assert "exc_info" not in entry
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("nothing to see here", "nothing to see here"),
+        ("mode=full status: ok", "mode=full status: ok"),
+        ("https://example.com/path?a=1", "https://example.com/path?a=1"),
+        ("https://user@example.com", "https://[REDACTED]@example.com"),
+        ("Basic dXNlcjpwYXNz", "Basic [REDACTED]"),
+        ("client_secret = abc; next", "client_secret = [REDACTED]; next"),
+        ("DB_PASSWORD='p w'", "DB_PASSWORD='[REDACTED]'"),
+    ],
+)
+def test_redact_text(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
+def test_redact_exception_without_a_traceback() -> None:
+    assert redact_exception(ValueError("token=abc")) == "ValueError: token=[REDACTED]"
+
+
+async def test_stdlib_failure_logs_are_redacted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="refresh_engine")
+    publisher = AsyncEventPublisher()
+
+    async def failing(item: RefreshEvent) -> None:
+        raise RuntimeError("password=hunter2")
+
+    publisher.subscribe(failing)
+    publisher.publish(RefreshEvent(EventKind.REFRESH_STARTED))
+    await publisher.drain()
+
+    (record,) = [item for item in caplog.records if item.name == "refresh_engine"]
+    assert record.getMessage().endswith("RuntimeError: password=[REDACTED]")
+    assert "hunter2" not in record.getMessage()
+    assert record.exc_info is None
+
+
+def test_stdlib_failure_logs_withhold_text_when_redaction_fails(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from refresh_engine._internal import redaction
+
+    def broken(error: BaseException) -> str:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(redaction, "redact_exception", broken)
+    caplog.set_level(logging.ERROR, logger="refresh_engine")
+
+    redaction.log_failure(
+        logging.getLogger("refresh_engine"),
+        logging.ERROR,
+        "failed %s",
+        "step",
+        error=ValueError("password=hunter2"),
+    )
+
+    assert caplog.records[-1].getMessage() == (
+        "failed step\nValueError: [message withheld: redaction failed]"
+    )
 
 
 @pytest.mark.parametrize("kind", list(EventKind), ids=kind_id)

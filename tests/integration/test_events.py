@@ -217,3 +217,19 @@ async def test_metrics_handler_counts_refreshes_end_to_end() -> None:
         )
         == 1
     )
+
+
+async def test_fast_operations_yield_so_a_small_queue_never_drops_events() -> None:
+    events = AsyncEventPublisher(capacity=512)
+    recorder = EventRecorder()
+    events.subscribe(recorder)
+    source = FakeSource(
+        {f"r{index}": index for index in range(3000)}, asynchronous=False
+    )
+    async with RefreshEngine(source, RecordingOperation(), events=events) as engine:
+        result = await engine.refresh()
+
+    assert result.refreshed_count == 3000
+    assert events.dropped == 0
+    assert events.peak_queued <= 512
+    assert len(recorder.of(EventKind.RESOURCE_REFRESH_COMPLETED)) == 3000

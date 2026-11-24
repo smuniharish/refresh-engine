@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
 
 from refresh_engine import (
+    ConfigurationError,
     InMemoryStateStore,
     ResourceFingerprint,
     ResourceState,
@@ -172,3 +174,45 @@ async def test_interleaved_transactions_keep_each_others_changes() -> None:
     await second.commit()
 
     assert await store.load_all() == {"alpha": ALPHA, "beta": BETA}
+
+
+async def test_store_accepts_an_empty_initial_mapping() -> None:
+    assert await InMemoryStateStore({}).load_all() == {}
+
+
+@pytest.mark.parametrize(
+    ("initial", "message"),
+    [
+        ([ALPHA], "initial must be a mapping"),
+        (
+            {"alpha": "state"},
+            "initial must map resource IDs to ResourceState objects, not str",
+        ),
+        (
+            {"wrong-key": ALPHA},
+            "initial key 'wrong-key' does not match its state's resource_id 'alpha'",
+        ),
+    ],
+)
+def test_store_rejects_invalid_initial_states(initial: object, message: str) -> None:
+    with pytest.raises(ConfigurationError, match=f"^{re.escape(message)}$"):
+        InMemoryStateStore(cast(Any, initial))
+
+
+async def test_loaded_state_metadata_cannot_change_the_store() -> None:
+    nested = {"settings": {"hosts": ["a"]}}
+    store = InMemoryStateStore(
+        {
+            "alpha": ResourceState(
+                "alpha", ResourceFingerprint("test", "v1"), snapshot_metadata=nested
+            )
+        }
+    )
+    nested["settings"]["hosts"].append("b")
+    loaded = (await store.load_all())["alpha"]
+
+    with pytest.raises(TypeError):
+        loaded.snapshot_metadata["settings"]["hosts"].append("c")
+    assert (await store.load_all())["alpha"].snapshot_metadata == {
+        "settings": {"hosts": ["a"]}
+    }

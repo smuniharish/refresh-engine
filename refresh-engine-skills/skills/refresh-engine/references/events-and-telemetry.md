@@ -1,7 +1,12 @@
 # Events and telemetry
 
 Event-handler functions are async. For queued event publishing, the concrete
-publisher is `AsyncEventPublisher`.
+publisher is `AsyncEventPublisher`. Its queue is bounded by `capacity`; when
+handlers fall behind, events are dropped and counted in `dropped`, so keep
+handlers fast and monitor that counter.
+
+`StructlogEventHandler` logs exceptions with credentials redacted by default.
+Keep `raw_exceptions` disabled unless tracebacks are known to be safe to log.
 
 Optional OpenTelemetry integration is installed with the `otel` extra:
 

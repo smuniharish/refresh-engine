@@ -82,7 +82,7 @@ class Executor:
         dependents, indegree = self._plan.dependents, self._plan.indegree
         if dependents is None or indegree is None:
             await run_bounded(
-                range(count), self._run_item, self._limit, context.should_stop
+                range(count), self._run_one, self._limit, context.should_stop
             )
         else:
             await self._run_graph(dependents, indegree)
@@ -162,7 +162,7 @@ class Executor:
                 index = heappop(ready)
                 self._in_flight += 1
                 try:
-                    succeeded = await self._run_item(index)
+                    succeeded = await self._run_one(index)
                 finally:
                     self._in_flight -= 1
                 done[index] = True
@@ -171,6 +171,11 @@ class Executor:
                 wakeup.set()
 
         await run_workers(worker, min(self._limit, count))
+
+    async def _run_one(self, index: int) -> bool:
+        succeeded = await self._run_item(index)
+        await self._context.emit.cooperate()
+        return succeeded
 
     async def _run_item(self, index: int) -> bool:
         context = self._context

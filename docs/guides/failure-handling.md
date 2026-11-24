@@ -24,7 +24,8 @@ A [`RefreshResult`][refresh_engine.RefreshResult] reports failures in three plac
 | `planning` | A dependency cycle, or a selector that raised. | Resource or refresh |
 | `execution` | The operation raised or timed out, or a dependency failed. | Resource |
 
-Lifecycle events carry the original exception, so logs keep the full traceback; see
+Lifecycle events carry the original exception, and the structured-logging handler
+logs its traceback with credentials redacted; see
 [Events, logging, and metrics](observability.md).
 
 ## Statuses
@@ -109,7 +110,44 @@ from refresh_engine import FailurePolicy, RefreshConfig
 config = RefreshConfig(failure_policy=FailurePolicy.FAIL_FAST)
 ```
 
-Use `FAIL_FAST` when a destination must change all at once or not at all.
+`FAIL_FAST` protects the engine's *state*, not the destination. After the first
+failure:
+
+- no further operation is started; the number of planned operations that never
+  started is reported in `warnings`, and they have no entry in `executions`;
+- operations that are already running finish, and their outcomes are recorded in
+  `executions`;
+- no state is committed, not even for operations that succeeded, and the result is
+  `FAILED`.
+
+Destination side effects of operations that succeeded before or during the failure
+are **not** rolled back. Because their state was not committed, the next refresh
+detects the same changes and runs those operations again. Operations must therefore
+be idempotent. When a destination genuinely requires all-or-nothing updates, make it
+take part in the transaction, for example by staging writes and publishing them in
+a final step, or compensate in your own code; the engine does not undo work.
+
+Use `FAIL_FAST` when later resources should not be processed once one has failed,
+for example to stop early against a destination that is down.
+
+## Asynchronous work and timeouts
+
+Timeouts and cancellation in asyncio are cooperative. They take effect only when the
+running coroutine reaches an `await` that suspends:
+
+- an `async def` that performs blocking I/O or long computation without awaiting
+  blocks the event loop; no timeout, retry delay, scheduler tick, or event delivery
+  runs until it returns;
+- a timeout cannot interrupt synchronous code that is already running, so a hung
+  blocking call keeps its resources even after the refresh reports a timeout.
+
+Run blocking I/O in a thread with `await asyncio.to_thread(...)`, and run heavy
+CPU-bound work in a process pool through `loop.run_in_executor(...)`. A thread that
+is abandoned by a timeout keeps running until its call returns, so blocking clients
+still need their own timeouts. The built-in fingerprint strategies hash on the event
+loop; for very large snapshots, fingerprint a compact projection of the content, or
+write a strategy whose `fingerprint()` hashes in a thread with
+`asyncio.to_thread(canonical_digest, value)`.
 
 ## Discovery failures
 

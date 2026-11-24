@@ -22,7 +22,9 @@ A **source** implements [`ResourceSource`][refresh_engine.ResourceSource]:
 !!! warning "Completeness protects against accidental deletion"
     Only a discovery that reports `complete=True` lets the engine conclude that a
     previously known resource was deleted. Report `complete=False` whenever the
-    listing may be partial, for example after a pagination error.
+    listing may be partial, for example after a pagination error. `complete` must be
+    an actual `bool`; a value such as the string `"false"` raises a
+    `ConfigurationError` instead of being treated as true.
 
 ## Operations
 
@@ -51,6 +53,24 @@ version, cheap indicator, snapshot metadata, dependencies, and the time of the
 refresh. A [`StateStore`][refresh_engine.StateStore] keeps these states between
 refreshes; the default [`InMemoryStateStore`][refresh_engine.InMemoryStateStore]
 keeps them for the lifetime of the process.
+
+## Immutable values
+
+Models are frozen, and so is the metadata they carry. The metadata of resources,
+snapshots, states, and refresh requests, and the attributes of events, are copied on
+construction, so later changes to the caller's objects never leak into them:
+
+- `dict` and mapping proxies become read-only dictionaries, `list` becomes a
+  read-only list, `set` becomes `frozenset`, and tuples are rebuilt, at any depth;
+  the copies still compare equal to the originals, serialize like them, and have
+  the same fingerprints;
+- mutating a copy raises `TypeError`;
+- other objects, including subclasses of built-in containers, are kept by
+  reference, because the engine cannot copy them safely; treat them as read-only;
+- metadata that contains a reference cycle raises a `ConfigurationError`.
+
+Snapshot `content` is never copied, so large payloads cost nothing extra. The engine
+only reads it; treat it as read-only once returned from `snapshot()`.
 
 ## Change detection
 

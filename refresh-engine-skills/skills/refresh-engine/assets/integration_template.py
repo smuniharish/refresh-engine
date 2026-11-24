@@ -1,4 +1,4 @@
-"""Checklist-shaped integration template for refresh-engine 1.0.1.
+"""Checklist-shaped integration template for refresh-engine 1.1.0.
 
 Use the installed package's public ABC signatures to complete these classes.
 The API may still be settling, so this template intentionally does not encode

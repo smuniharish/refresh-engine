@@ -1,7 +1,7 @@
 # refresh-engine Agent Skills
 
 This directory distributes two [Agent Skills](https://agentskills.io) for
-`refresh-engine` 1.0.1. They provide focused workflows and checked templates;
+`refresh-engine` 1.1.0. They provide focused workflows and checked templates;
 they do not add runtime code.
 
 | Skill | Use it for |

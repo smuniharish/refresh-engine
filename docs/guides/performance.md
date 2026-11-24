@@ -6,18 +6,21 @@ change, not the size of the population.
 ## Benchmark results
 
 The benchmark in the repository measures the engine's own overhead with in-memory
-sources and operations. On CPython 3.12 and Windows 11:
+sources and operations, 1 KiB snapshot payloads, and a concurrency of 10. On
+CPython 3.15 and Windows 11:
 
 | Resources | Unchanged | 1,000 changed | Full refresh | Peak memory (full) |
 | ---: | ---: | ---: | ---: | ---: |
-| 1,000 | 0.003 s | 0.016 s | 0.016 s | 1.1 MB |
-| 10,000 | 0.027 s | 0.069 s | 0.315 s | 10.5 MB |
-| 100,000 | 0.555 s | 0.488 s | 3.141 s | 114.2 MB |
+| 1,000 | 0.003 s | 0.025 s | 0.028 s | 1.6 MB |
+| 10,000 | 0.028 s | 0.065 s | 0.313 s | 15.6 MB |
+| 100,000 | 0.385 s | 0.518 s | 4.206 s | 164.6 MB |
+| 1,000,000 | 6.2 s | 6.5 s | 48.6 s | 1,589 MB |
 
-Compared with the previous release, a full refresh of 100,000 resources is three
-times faster and needs less than a quarter of the memory. The
+An incremental refresh of one million resources with a thousand changes takes about
+as long as one with no changes, because unchanged resources are matched by their
+cheap indicators. The
 [benchmark README](https://github.com/smuniharish/refresh-engine/blob/HEAD/benchmarks/README.md)
-describes the workload and the full results.
+describes the workload, the environment, and the per-phase results.
 
 ## How the engine stays fast
 

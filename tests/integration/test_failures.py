@@ -503,6 +503,73 @@ async def test_fail_fast_stops_starting_operations_after_a_failure() -> None:
     assert states == {}
 
 
+async def test_fail_fast_lets_in_flight_operations_finish_without_committing() -> None:
+    source = FakeSource({f"r{index}": index for index in range(6)})
+    release = asyncio.Event()
+    failing = asyncio.Event()
+    started: list[str] = []
+    finished: list[str] = []
+
+    async def operation(
+        resource: Resource,
+        snapshot: ResourceSnapshot | None,
+        action: PlanAction,
+        request: object,
+        /,
+    ) -> None:
+        resource_id = resource.resource_id
+        started.append(resource_id)
+        if resource_id == "r2":
+            failing.set()
+            await asyncio.sleep(0)
+            raise RuntimeError("boom")
+        await release.wait()
+        finished.append(resource_id)
+
+    async def release_after_failure() -> None:
+        await failing.wait()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        release.set()
+
+    config = RefreshConfig(failure_policy=FailurePolicy.FAIL_FAST, max_concurrency=3)
+    async with RefreshEngine(source, operation, config=config) as engine:
+        releaser = asyncio.create_task(release_after_failure())
+        result = await engine.refresh()
+        await releaser
+        states = await engine.store.load_all()
+    assert result.status is RefreshStatus.FAILED
+    assert started == ["r0", "r1", "r2"]
+    assert finished == ["r0", "r1"]
+    outcomes = {item.resource_id: item.succeeded for item in result.executions}
+    assert outcomes == {"r0": True, "r1": True, "r2": False}
+    assert result.refreshed_count == 2
+    assert result.failed_count == 1
+    assert result.warnings == (
+        "3 planned operations were not started because the failure policy is fail_fast",
+    )
+    assert states == {}
+
+
+async def test_work_completed_by_a_failed_fail_fast_refresh_is_retried_next_time() -> (
+    None
+):
+    source = FakeSource({"r0": 0, "r1": 1, "r2": 2})
+    operation = RecordingOperation(
+        failures={"r1": RuntimeError("boom")}, failures_remaining={"r1": 1}
+    )
+    config = RefreshConfig(failure_policy=FailurePolicy.FAIL_FAST, max_concurrency=1)
+    async with RefreshEngine(source, operation, config=config) as engine:
+        failed = await engine.refresh()
+        operation.calls.clear()
+        retried = await engine.refresh()
+        states = await engine.store.load_all()
+    assert failed.status is RefreshStatus.FAILED
+    assert retried.status is RefreshStatus.SUCCESS
+    assert operation.ids() == ["r0", "r1", "r2"]
+    assert set(states) == {"r0", "r1", "r2"}
+
+
 async def test_fail_fast_with_a_dependency_cycle_runs_nothing() -> None:
     source = FakeSource({"a": 1, "b": 1, "c": 1}, dependencies={"a": {"b"}, "b": {"a"}})
     operation = RecordingOperation()
@@ -665,9 +732,19 @@ async def test_selector_failure_fails_the_refresh() -> None:
 
 
 async def test_unexpected_errors_are_reported_as_refresh_failures() -> None:
+    class BrokenMapping(Mapping[str, ResourceState]):
+        def __getitem__(self, key: str) -> ResourceState:
+            raise AttributeError(key)
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(())
+
+        def __len__(self) -> int:
+            return 0
+
     class CorruptStore(InMemoryStateStore):
         async def load_all(self) -> Mapping[str, ResourceState]:
-            return cast(Mapping[str, ResourceState], None)
+            return BrokenMapping()
 
     async with RefreshEngine(
         FakeSource({"a": 1}), RecordingOperation(), store=CorruptStore()
@@ -677,6 +754,41 @@ async def test_unexpected_errors_are_reported_as_refresh_failures() -> None:
     (issue,) = result.errors
     assert issue.phase is RefreshPhase.SNAPSHOT
     assert issue.exception_type == "AttributeError"
+
+
+@pytest.mark.parametrize(
+    ("loaded", "message"),
+    [
+        (None, "load_all() result must be a mapping"),
+        (
+            {"a": "state"},
+            "load_all() result must map resource IDs to ResourceState objects, not str",
+        ),
+        (
+            {"wrong": ResourceState("a", ResourceFingerprint("sha256", "x"))},
+            "load_all() result key 'wrong' does not match its state's resource_id 'a'",
+        ),
+    ],
+)
+async def test_invalid_load_all_results_fail_the_refresh_before_any_work(
+    loaded: object, message: str
+) -> None:
+    class CorruptStore(InMemoryStateStore):
+        async def load_all(self) -> Mapping[str, ResourceState]:
+            return cast(Mapping[str, ResourceState], loaded)
+
+    operation = RecordingOperation()
+    async with RefreshEngine(
+        FakeSource({"a": 1}), operation, store=CorruptStore()
+    ) as engine:
+        result = await engine.refresh()
+
+    assert result.status is RefreshStatus.FAILED
+    (issue,) = result.errors
+    assert issue.phase is RefreshPhase.PERSISTENCE
+    assert issue.message == f"failed to load state: {message}"
+    assert issue.exception_type == "ConfigurationError"
+    assert operation.calls == []
 
 
 async def test_foreign_timeout_errors_are_not_the_overall_timeout() -> None:

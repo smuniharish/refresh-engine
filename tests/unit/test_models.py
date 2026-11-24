@@ -935,3 +935,89 @@ def test_models_are_frozen(model: object, field: str) -> None:
         setattr(model, field, None)
 
     assert getattr(model, field) is original
+
+
+INVALID_BOOLS = pytest.mark.parametrize(
+    ("value", "kind"),
+    [
+        ("true", "str"),
+        ("false", "str"),
+        (0, "int"),
+        (1, "int"),
+        (None, "NoneType"),
+        (1.0, "float"),
+        ([], "list"),
+    ],
+)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_safety_sensitive_booleans_accept_real_booleans(value: bool) -> None:
+    assert (
+        Resource("a", cheap_indicator_reliable=value).cheap_indicator_reliable is value
+    )
+    assert DiscoveryResult([], complete=value).complete is value
+
+
+@INVALID_BOOLS
+def test_resource_rejects_a_non_boolean_cheap_indicator_reliable(
+    value: object, kind: str
+) -> None:
+    with pytest.raises(
+        ConfigurationError,
+        match=exactly(f"cheap_indicator_reliable must be a bool, not {kind}"),
+    ):
+        Resource("a", cheap_indicator="v1", cheap_indicator_reliable=cast(Any, value))
+
+
+@INVALID_BOOLS
+def test_discovery_result_rejects_a_non_boolean_complete(
+    value: object, kind: str
+) -> None:
+    with pytest.raises(
+        ConfigurationError, match=exactly(f"complete must be a bool, not {kind}")
+    ):
+        DiscoveryResult([], complete=cast(Any, value))
+
+
+def test_nested_metadata_is_frozen_and_isolated_from_the_caller() -> None:
+    settings: dict[str, Any] = {"enabled": True, "hosts": ["a"], "tags": {"x"}}
+    metadata = {"settings": settings}
+
+    resource = Resource("a", metadata=metadata)
+    snapshot = ResourceSnapshot("a", metadata=metadata)
+    state = ResourceState("a", FINGERPRINT, snapshot_metadata=metadata)
+    request = RefreshRequest(metadata=metadata)
+    settings["enabled"] = False
+    settings["hosts"].append("b")
+    settings["tags"].add("y")
+
+    for frozen in (
+        resource.metadata,
+        snapshot.metadata,
+        state.snapshot_metadata,
+        request.metadata,
+    ):
+        nested = frozen["settings"]
+        assert nested == {"enabled": True, "hosts": ["a"], "tags": frozenset({"x"})}
+        with pytest.raises(TypeError):
+            nested["enabled"] = False
+        with pytest.raises(TypeError):
+            nested["hosts"].append("c")
+
+
+def test_metadata_cycles_are_rejected_with_the_field_name() -> None:
+    cycle: dict[str, Any] = {}
+    cycle["self"] = cycle
+
+    with pytest.raises(
+        ConfigurationError,
+        match=exactly("snapshot_metadata must not contain reference cycles"),
+    ):
+        ResourceState("a", FINGERPRINT, snapshot_metadata={"cycle": cycle})
+
+
+def test_snapshot_content_is_kept_by_reference() -> None:
+    content = {"body": ["mutable"]}
+
+    assert ResourceSnapshot("a", content=content).content is content

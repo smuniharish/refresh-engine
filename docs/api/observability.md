@@ -4,6 +4,10 @@
 
 ::: refresh_engine.default_redactor
 
+::: refresh_engine.redact_text
+
+::: refresh_engine.redact_exception
+
 ::: refresh_engine.MetricsEventHandler
 
 ::: refresh_engine.InMemoryMetrics

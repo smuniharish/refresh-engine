@@ -434,11 +434,13 @@ async def test_handler_exceptions_are_isolated_recorded_and_logged(
     assert recorder.events == [published]
     assert publisher.errors == tuple(raised)
     (record,) = publisher_warnings(caplog)
-    assert record.getMessage() == (
-        f"refresh event handler {failing!r} failed for refresh_started event"
+    message = record.getMessage()
+    assert message.startswith(
+        f"refresh event handler {failing!r} failed for refresh_started event\n"
+        "Traceback (most recent call last):\n"
     )
-    assert record.exc_info is not None
-    assert record.exc_info[1] is raised[0]
+    assert message.endswith("ValueError: cannot handle refresh_started")
+    assert record.exc_info is None
 
 
 async def test_async_handler_exceptions_are_isolated() -> None:
@@ -640,3 +642,189 @@ async def test_dispatcher_yields_to_the_event_loop_during_long_deliveries() -> N
     # dispatcher's first step; it can only see a partial delivery if the
     # dispatcher yielded to the loop part-way through.
     assert 0 < observed[0] < total
+
+
+def resource_event(index: int) -> RefreshEvent:
+    return RefreshEvent(EventKind.RESOURCE_REFRESH_COMPLETED, resource_id=str(index))
+
+
+def test_capacity_is_validated_and_exposed() -> None:
+    assert AsyncEventPublisher().capacity == 100_000
+    assert AsyncEventPublisher(capacity=5).capacity == 5
+    for value in (0, -1, 1.5, True):
+        with pytest.raises(
+            ConfigurationError,
+            match=re.escape("capacity must be an integer of at least 1"),
+        ):
+            AsyncEventPublisher(capacity=cast(Any, value))
+
+
+async def test_queue_under_normal_load_delivers_everything() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    for index in range(5):
+        publisher.publish(resource_event(index))
+    await drain(publisher)
+
+    assert [item.resource_id for item in recorder.events] == list("01234")
+    assert publisher.dropped == 0
+    assert publisher.queued == 0
+    assert publisher.peak_queued == 5
+
+
+async def test_saturated_queue_drops_newest_events_and_logs_once_per_episode(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    publisher = AsyncEventPublisher(capacity=3)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    for index in range(6):
+        publisher.publish(resource_event(index))
+    assert publisher.queued == 3
+    assert publisher.dropped == 3
+    await drain(publisher)
+    for index in range(6, 10):
+        publisher.publish(resource_event(index))
+    await drain(publisher)
+
+    assert [item.resource_id for item in recorder.events] == [
+        "0",
+        "1",
+        "2",
+        "6",
+        "7",
+        "8",
+    ]
+    assert publisher.dropped == 4
+    assert publisher.peak_queued == 3
+    warnings = publisher_warnings(caplog)
+    assert len(warnings) == 2
+    assert warnings[0].getMessage() == (
+        "refresh event queue is full (capacity 3); dropping events until handlers "
+        "catch up"
+    )
+
+
+async def test_boundary_events_use_the_reserve_when_the_queue_is_full() -> None:
+    publisher = AsyncEventPublisher(capacity=2)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    publisher.publish(event(EventKind.REFRESH_STARTED))
+    publisher.publish(resource_event(1))
+    publisher.publish(resource_event(2))
+    publisher.publish(event(EventKind.REFRESH_COMPLETED))
+    publisher.publish(event(EventKind.SCHEDULER_STOPPED))
+    await drain(publisher)
+
+    assert [item.kind for item in recorder.events] == [
+        EventKind.REFRESH_STARTED,
+        EventKind.RESOURCE_REFRESH_COMPLETED,
+        EventKind.REFRESH_COMPLETED,
+        EventKind.SCHEDULER_STOPPED,
+    ]
+    assert publisher.dropped == 1
+
+
+async def test_sustained_production_keeps_memory_bounded() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    publisher.subscribe(EventRecorder())
+
+    for index in range(5_000):
+        publisher.publish(resource_event(index))
+        publisher.publish(event(EventKind.REFRESH_FAILED))
+
+    assert publisher.queued == 10 + AsyncEventPublisher.BOUNDARY_RESERVE
+    assert publisher.peak_queued == publisher.queued
+    assert publisher.dropped == 10_000 - publisher.queued
+    await drain(publisher)
+    assert publisher.queued == 0
+
+
+async def test_slow_subscriber_never_blocks_publishing_and_subscribers_agree() -> None:
+    publisher = AsyncEventPublisher(capacity=4)
+    release = asyncio.Event()
+    slow_seen: list[str | None] = []
+    fast = EventRecorder()
+
+    async def slow(item: RefreshEvent) -> None:
+        await release.wait()
+        slow_seen.append(item.resource_id)
+
+    publisher.subscribe(slow)
+    publisher.subscribe(fast)
+    publisher.publish(resource_event(0))
+    await asyncio.sleep(0)
+    for index in range(1, 10):
+        publisher.publish(resource_event(index))
+    assert publisher.queued == 4
+    release.set()
+    await drain(publisher)
+
+    assert slow_seen == ["0", "1", "2", "3", "4"]
+    assert [item.resource_id for item in fast.events] == slow_seen
+    assert publisher.dropped == 5
+
+
+async def test_handler_failure_under_saturation_does_not_stop_delivery() -> None:
+    publisher = AsyncEventPublisher(capacity=2)
+    recorder = EventRecorder()
+
+    async def broken(item: RefreshEvent) -> None:
+        raise RuntimeError(item.resource_id)
+
+    publisher.subscribe(broken)
+    publisher.subscribe(recorder)
+    for index in range(4):
+        publisher.publish(resource_event(index))
+    await drain(publisher)
+
+    assert [item.resource_id for item in recorder.events] == ["0", "1"]
+    assert [str(error) for error in publisher.errors] == ["0", "1"]
+
+
+async def test_drain_restarts_delivery_after_the_dispatcher_was_cancelled() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    started = asyncio.Event()
+    seen: list[str | None] = []
+
+    async def handler(item: RefreshEvent) -> None:
+        if item.resource_id == "0" and not started.is_set():
+            started.set()
+            await asyncio.Event().wait()
+        seen.append(item.resource_id)
+
+    publisher.subscribe(handler)
+    for index in range(3):
+        publisher.publish(resource_event(index))
+    await started.wait()
+    dispatcher = publisher._dispatcher
+    assert dispatcher is not None
+    dispatcher.cancel()
+    await asyncio.wait((dispatcher,))
+    assert publisher.queued == 2
+
+    await drain(publisher)
+
+    assert seen == ["1", "2"]
+    assert publisher.queued == 0
+
+
+async def test_drain_leaves_events_queued_when_no_handler_remains() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+    publisher.publish(resource_event(0))
+    dispatcher = publisher._dispatcher
+    assert dispatcher is not None
+    dispatcher.cancel()
+    await asyncio.wait((dispatcher,))
+    publisher.unsubscribe(recorder)
+
+    await drain(publisher)
+
+    assert publisher.queued == 1
+    assert recorder.events == []

@@ -1,0 +1,318 @@
+{
+  "environment": {
+    "refresh_engine": "1.0.1",
+    "commit": "8abc5dceed608497790820ec767139102dbcd754-dirty",
+    "python": "3.15.2",
+    "implementation": "CPython",
+    "platform": "Windows-11-10.0.26100-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "logical_cpus": 20,
+    "physical_memory_bytes": 68111441920,
+    "date": "2026-11-24"
+  },
+  "options": {
+    "repeat": 3,
+    "payload_bytes": 1024,
+    "concurrency": 10,
+    "phases": true,
+    "memory": true
+  },
+  "fingerprint_seconds_per_resource": 5.448599999908765e-06,
+  "results": [
+    {
+      "size": 1000,
+      "profile": "unchanged",
+      "repeat": 3,
+      "seconds_median": 0.0030540000007022172,
+      "seconds_samples": [
+        0.0030540000007022172,
+        0.0029888999997638166,
+        0.0030587999999625026
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 1000,
+      "discovery_seconds": 0.0013315000005604816,
+      "snapshot_seconds": 0.0008459999999104184,
+      "detection_and_planning_seconds": 0.000145,
+      "peak_memory_bytes": 369255
+    },
+    {
+      "size": 1000,
+      "profile": "one",
+      "repeat": 3,
+      "seconds_median": 0.002706899999793677,
+      "seconds_samples": [
+        0.002485500000148022,
+        0.002706899999793677,
+        0.002819600000293576
+      ],
+      "status": "success",
+      "refreshed": 1,
+      "unchanged": 999,
+      "discovery_seconds": 0.0010476999996171799,
+      "snapshot_seconds": 0.0008161000005202368,
+      "execution_seconds": 5.870000040886225e-05,
+      "persistence_seconds": 6.099999973230297e-05,
+      "detection_and_planning_seconds": 0.000137,
+      "peak_memory_bytes": 386232
+    },
+    {
+      "size": 1000,
+      "profile": "hundred",
+      "repeat": 3,
+      "seconds_median": 0.004839800000809191,
+      "seconds_samples": [
+        0.006166399999528949,
+        0.004839800000809191,
+        0.004400700000587676
+      ],
+      "status": "success",
+      "refreshed": 100,
+      "unchanged": 900,
+      "discovery_seconds": 0.000990500000625616,
+      "snapshot_seconds": 0.00156779999997525,
+      "execution_seconds": 0.0009762999998201849,
+      "persistence_seconds": 9.14999991437071e-05,
+      "detection_and_planning_seconds": 0.000197,
+      "peak_memory_bytes": 529035
+    },
+    {
+      "size": 1000,
+      "profile": "thousand",
+      "repeat": 3,
+      "seconds_median": 0.025439000000005763,
+      "seconds_samples": [
+        0.025439000000005763,
+        0.02447219999976369,
+        0.03106000000025233
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 0,
+      "discovery_seconds": 0.0012664999994740356,
+      "snapshot_seconds": 0.009581600000274193,
+      "execution_seconds": 0.010003999999753432,
+      "persistence_seconds": 0.0003544999999576248,
+      "detection_and_planning_seconds": 0.000896,
+      "peak_memory_bytes": 1640175
+    },
+    {
+      "size": 1000,
+      "profile": "full",
+      "repeat": 3,
+      "seconds_median": 0.027614900000116904,
+      "seconds_samples": [
+        0.02686309999990044,
+        0.027614900000116904,
+        0.02762559999973746
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 1000,
+      "discovery_seconds": 0.001358000000436732,
+      "snapshot_seconds": 0.011314000000311353,
+      "execution_seconds": 0.011214500000278349,
+      "persistence_seconds": 0.00026369999977760017,
+      "detection_and_planning_seconds": 0.00057,
+      "peak_memory_bytes": 1640175
+    },
+    {
+      "size": 10000,
+      "profile": "unchanged",
+      "repeat": 3,
+      "seconds_median": 0.028422800000043935,
+      "seconds_samples": [
+        0.028250200000002224,
+        0.02859699999953591,
+        0.028422800000043935
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 10000,
+      "discovery_seconds": 0.012568299999657029,
+      "snapshot_seconds": 0.008074400000623427,
+      "detection_and_planning_seconds": 0.001553,
+      "peak_memory_bytes": 3671687
+    },
+    {
+      "size": 10000,
+      "profile": "one",
+      "repeat": 3,
+      "seconds_median": 0.03316990000075748,
+      "seconds_samples": [
+        0.03316990000075748,
+        0.034535300000243296,
+        0.030327000000397675
+      ],
+      "status": "success",
+      "refreshed": 1,
+      "unchanged": 9999,
+      "discovery_seconds": 0.013479199999892444,
+      "snapshot_seconds": 0.009914199999911943,
+      "execution_seconds": 9.11999995878432e-05,
+      "persistence_seconds": 0.0010971000001518405,
+      "detection_and_planning_seconds": 0.001784,
+      "peak_memory_bytes": 3672888
+    },
+    {
+      "size": 10000,
+      "profile": "hundred",
+      "repeat": 3,
+      "seconds_median": 0.03621790000033798,
+      "seconds_samples": [
+        0.03169949999937671,
+        0.03621790000033798,
+        0.03670750000037515
+      ],
+      "status": "success",
+      "refreshed": 100,
+      "unchanged": 9900,
+      "discovery_seconds": 0.01354189999983646,
+      "snapshot_seconds": 0.01080180000008113,
+      "execution_seconds": 0.0012231000000610948,
+      "persistence_seconds": 0.0010109000004376867,
+      "detection_and_planning_seconds": 0.001884,
+      "peak_memory_bytes": 3771915
+    },
+    {
+      "size": 10000,
+      "profile": "thousand",
+      "repeat": 3,
+      "seconds_median": 0.06519709999975021,
+      "seconds_samples": [
+        0.061498399999436515,
+        0.06519709999975021,
+        0.08333829999992304
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 9000,
+      "discovery_seconds": 0.013320399999429355,
+      "snapshot_seconds": 0.02692769999976008,
+      "execution_seconds": 0.010698500000216882,
+      "persistence_seconds": 0.0013441000000966596,
+      "detection_and_planning_seconds": 0.002709,
+      "peak_memory_bytes": 4796299
+    },
+    {
+      "size": 10000,
+      "profile": "full",
+      "repeat": 3,
+      "seconds_median": 0.3130817000001116,
+      "seconds_samples": [
+        0.3130817000001116,
+        0.3493631999999707,
+        0.30901189999985945
+      ],
+      "status": "success",
+      "refreshed": 10000,
+      "unchanged": 10000,
+      "discovery_seconds": 0.013376599999901373,
+      "snapshot_seconds": 0.12572459999955754,
+      "execution_seconds": 0.11024429999997665,
+      "persistence_seconds": 0.004552900000817317,
+      "detection_and_planning_seconds": 0.012741,
+      "peak_memory_bytes": 15560579
+    },
+    {
+      "size": 100000,
+      "profile": "unchanged",
+      "repeat": 3,
+      "seconds_median": 0.38482159999966825,
+      "seconds_samples": [
+        0.38319419999970705,
+        0.4698636000002807,
+        0.38482159999966825
+      ],
+      "status": "success",
+      "refreshed": 0,
+      "unchanged": 100000,
+      "discovery_seconds": 0.1522056000003431,
+      "snapshot_seconds": 0.14999170000010054,
+      "detection_and_planning_seconds": 0.018486,
+      "peak_memory_bytes": 39186199
+    },
+    {
+      "size": 100000,
+      "profile": "one",
+      "repeat": 3,
+      "seconds_median": 0.5186759999996866,
+      "seconds_samples": [
+        0.5186759999996866,
+        0.5023021999995763,
+        0.5519280999997136
+      ],
+      "status": "success",
+      "refreshed": 1,
+      "unchanged": 99999,
+      "discovery_seconds": 0.1670083999997587,
+      "snapshot_seconds": 0.19298840000010387,
+      "execution_seconds": 0.0001536999998279498,
+      "persistence_seconds": 0.03286070000012842,
+      "detection_and_planning_seconds": 0.028803,
+      "peak_memory_bytes": 41561944
+    },
+    {
+      "size": 100000,
+      "profile": "hundred",
+      "repeat": 3,
+      "seconds_median": 0.49350180000055843,
+      "seconds_samples": [
+        0.49350180000055843,
+        0.575170099999923,
+        0.44362719999935507
+      ],
+      "status": "success",
+      "refreshed": 100,
+      "unchanged": 99900,
+      "discovery_seconds": 0.16507550000005722,
+      "snapshot_seconds": 0.1914796999999453,
+      "execution_seconds": 0.0012484999997468549,
+      "persistence_seconds": 0.02852600000005623,
+      "detection_and_planning_seconds": 0.023757,
+      "peak_memory_bytes": 41705495
+    },
+    {
+      "size": 100000,
+      "profile": "thousand",
+      "repeat": 3,
+      "seconds_median": 0.5175153000000137,
+      "seconds_samples": [
+        0.4281149999997069,
+        0.5175153000000137,
+        0.5452883999996629
+      ],
+      "status": "success",
+      "refreshed": 1000,
+      "unchanged": 99000,
+      "discovery_seconds": 0.15790889999971114,
+      "snapshot_seconds": 0.20430789999954868,
+      "execution_seconds": 0.01136540000061359,
+      "persistence_seconds": 0.026512600000387465,
+      "detection_and_planning_seconds": 0.031219,
+      "peak_memory_bytes": 42816699
+    },
+    {
+      "size": 100000,
+      "profile": "full",
+      "repeat": 3,
+      "seconds_median": 4.206262900000183,
+      "seconds_samples": [
+        4.206262900000183,
+        4.525787700000365,
+        4.103573100000176
+      ],
+      "status": "success",
+      "refreshed": 100000,
+      "unchanged": 100000,
+      "discovery_seconds": 0.14929010000014387,
+      "snapshot_seconds": 1.9011061999999583,
+      "execution_seconds": 1.2250586000000112,
+      "persistence_seconds": 0.09136409999973694,
+      "detection_and_planning_seconds": 0.139842,
+      "peak_memory_bytes": 164584511
+    }
+  ]
+}

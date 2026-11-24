@@ -8,10 +8,10 @@ description: >-
   integrations or stores, custom telemetry, or StateStoreContract work.
 license: Apache-2.0
 compatibility: >-
-  Python 3.12 or newer. Install refresh-engine 1.0.1 from PyPI. The optional
+  Python 3.12 or newer. Install refresh-engine 1.1.0 from PyPI. The optional
   OpenTelemetry handler is available from the refresh-engine[otel] extra.
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
   documentation: "https://refresh-engine.readthedocs.io/"
 ---
 
