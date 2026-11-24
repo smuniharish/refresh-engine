@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `AsyncEventPublisher` always delivers the event that closes a refresh or
+  resource lifecycle whose start it delivered, even when the queue and its
+  boundary reserve are full. Open lifecycles are tracked within `capacity`; when
+  it is reached, new lifecycle starts are not delivered instead of evicting an
+  open lifecycle, and the new `open_lifecycles` and `rejected_lifecycles`
+  properties report them. A handler that unsubscribes still receives the closing
+  events of the lifecycles whose start it received.
+- An event whose delivery was interrupted by cancelling the delivery task is
+  delivered again, to the interrupted handler and the handlers after it, by the
+  next delivery task. A handler that raises `asyncio.CancelledError` on its own
+  is logged as a failure.
+- `OpenTelemetryEventHandler` starts resource spans only under an open refresh
+  span and ends every span of a refresh even when one span operation fails.
+  Engine events identify their refresh lifecycle, so the handler ignores replayed
+  events of finished refreshes while tracing delayed starts from any publisher.
+
 ## [1.1.0] - 2026-11-24
 
 ### Added

@@ -6,8 +6,9 @@ tracer; provider configuration and shutdown remain application-owned.
 
 from __future__ import annotations
 
+import weakref
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Final
 
@@ -15,7 +16,7 @@ from opentelemetry.context import get_current
 from opentelemetry.metrics import Counter, Histogram, Meter
 from opentelemetry.trace import Span, Status, StatusCode, Tracer, set_span_in_context
 
-from refresh_engine._internal.values import strict_bool
+from refresh_engine._internal.values import Lifecycle, strict_bool
 from refresh_engine.contracts import MetricsSink
 from refresh_engine.events import EventHandler, EventKind, RefreshEvent
 from refresh_engine.observability import MetricsEventHandler
@@ -71,13 +72,27 @@ class OpenTelemetryEventHandler(EventHandler):
     messages are never recorded. Provider and exporter lifecycle remain owned by
     the application.
 
-    Every span the handler starts is ended. A terminal refresh event ends the
-    refresh span and every resource span of that refresh that is still open, for
-    example after a cancellation or an overall timeout interrupted the
-    operation; those resource spans get an error status and the attribute
-    ``refresh_engine.resource.interrupted``. Duplicate, late, and out-of-order
-    events are ignored, and span bookkeeping runs even when recording a metric
-    fails.
+    A terminal refresh event ends the refresh span and every resource span of
+    that refresh that is still open, for example after a cancellation or an
+    overall timeout interrupted the operation; those resource spans get an error
+    status and the attribute ``refresh_engine.resource.interrupted``. Resource
+    spans are only started while their refresh span is open. The default
+    [`AsyncEventPublisher`][refresh_engine.AsyncEventPublisher] always delivers
+    the event that closes a lifecycle whose start it delivered, even when its
+    queue is full, so every span is ended exactly once.
+
+    Duplicate, late, and out-of-order events never start or end a span twice.
+    Events published by the engine carry an identity shared by every event of
+    their refresh, and the handler remembers each finished refresh for as long as
+    any of its events exists, so a delayed `REFRESH_STARTED` of an unfinished
+    refresh is traced however many other refreshes finished meanwhile, even
+    through other publishers, while one of a finished refresh never starts a
+    span again. For events created by application code, which lack that
+    identity, the handler remembers the last 1,024 finished refresh IDs, and
+    ignores a `REFRESH_STARTED` created before the end of a refresh it has since
+    forgotten; such a start can be ignored when it is delivered after more than
+    1,024 other refreshes finished. Span bookkeeping runs even when recording a
+    metric or ending another span fails.
 
     Raises:
         ConfigurationError: If `record_identifiers` is not a `bool`.
@@ -99,7 +114,9 @@ class OpenTelemetryEventHandler(EventHandler):
         )
         self._refresh_spans: dict[str, Span] = {}
         self._resource_spans: dict[str, dict[str, Span]] = {}
-        self._finished: OrderedDict[str, None] = OrderedDict()
+        self._finished: OrderedDict[str, int] = OrderedDict()
+        self._forgotten = -1
+        self._finished_lifecycles: weakref.WeakSet[Lifecycle] = weakref.WeakSet()
 
     async def __call__(self, event: RefreshEvent) -> None:
         """Translate one event to metrics and span lifecycle operations."""
@@ -121,9 +138,13 @@ class OpenTelemetryEventHandler(EventHandler):
 
     def _start_refresh(self, event: RefreshEvent) -> None:
         refresh_id = event.refresh_id
-        if refresh_id is None or refresh_id in self._finished:
+        if refresh_id is None or refresh_id in self._refresh_spans:
             return
-        if refresh_id in self._refresh_spans:
+        lifecycle = event._lifecycle
+        if lifecycle is not None:
+            if lifecycle in self._finished_lifecycles:
+                return
+        elif refresh_id in self._finished or event._sequence <= self._forgotten:
             return
         parent = event._context.run(get_current)
         span = self._tracer.start_span(
@@ -139,16 +160,17 @@ class OpenTelemetryEventHandler(EventHandler):
 
     def _start_resource(self, event: RefreshEvent) -> None:
         refresh_id, resource_id = event.refresh_id, event.resource_id
-        if refresh_id is None or resource_id is None or refresh_id in self._finished:
+        if refresh_id is None or resource_id is None:
+            return
+        refresh = self._refresh_spans.get(refresh_id)
+        if refresh is None:
             return
         spans = self._resource_spans.setdefault(refresh_id, {})
         if resource_id in spans:
             return
-        refresh = self._refresh_spans.get(refresh_id)
-        parent_context = set_span_in_context(refresh) if refresh is not None else None
         span = self._tracer.start_span(
             "refresh_engine.resource",
-            context=parent_context,
+            context=set_span_in_context(refresh),
             start_time=_timestamp_ns(event),
         )
         if self._record_identifiers:
@@ -178,37 +200,61 @@ class OpenTelemetryEventHandler(EventHandler):
         refresh_id = event.refresh_id
         if refresh_id is None:
             return
-        self._finished[refresh_id] = None
-        if len(self._finished) > _FINISHED_MEMORY:
-            self._finished.popitem(last=False)
+        lifecycle = event._lifecycle
+        if lifecycle is not None:
+            if lifecycle in self._finished_lifecycles:
+                return
+            self._finished_lifecycles.add(lifecycle)
+        elif not self._remember(refresh_id, event._sequence):
+            return
         end_time = _timestamp_ns(event)
         status = _INTERRUPTED_STATUS[event.kind]
-        for span in self._resource_spans.pop(refresh_id, {}).values():
+        failures: list[Exception] = []
+
+        def interrupt(span: Span) -> None:
             span.set_attribute("refresh_engine.resource.interrupted", True)
             span.set_status(status)
-            span.end(end_time=end_time)
+
+        def complete(span: Span) -> None:
+            _set_attributes(span, event.attributes, _REFRESH_ATTRIBUTES)
+            if event.kind in (EventKind.REFRESH_FAILED, EventKind.REFRESH_CANCELLED):
+                span.set_status(Status(StatusCode.ERROR))
+
+        for span in self._resource_spans.pop(refresh_id, {}).values():
+            _end(span, interrupt, end_time, failures)
         span = self._refresh_spans.pop(refresh_id, None)
-        if span is None:
-            return
-        _set_attributes(
-            span,
-            event.attributes,
-            (
-                "status",
-                "mode",
-                "trigger",
-                "duration",
-                "refreshed",
-                "deleted",
-                "failed",
-            ),
-        )
-        if event.kind in (EventKind.REFRESH_FAILED, EventKind.REFRESH_CANCELLED):
-            span.set_status(Status(StatusCode.ERROR))
-        span.end(end_time=end_time)
+        if span is not None:
+            _end(span, complete, end_time, failures)
+        if failures:
+            raise failures[0]
+
+    def _remember(self, refresh_id: str, sequence: int) -> bool:
+        """Record a refresh finished by an event without lifecycle identity.
+
+        Returns whether the event is the first known end of the refresh.
+        """
+        finished = self._finished
+        if refresh_id in finished or (
+            refresh_id not in self._refresh_spans and sequence <= self._forgotten
+        ):
+            return False
+        finished[refresh_id] = sequence
+        if len(finished) > _FINISHED_MEMORY:
+            _, forgotten = finished.popitem(last=False)
+            self._forgotten = max(self._forgotten, forgotten)
+        return True
 
 
 _FINISHED_MEMORY: Final = 1024
+_REFRESH_ATTRIBUTES: Final = (
+    "status",
+    "mode",
+    "trigger",
+    "duration",
+    "refreshed",
+    "deleted",
+    "failed",
+)
 _RESOURCE_TERMINAL: Final = frozenset(
     {
         EventKind.RESOURCE_REFRESH_COMPLETED,
@@ -233,6 +279,23 @@ _INTERRUPTED_STATUS: Final[Mapping[EventKind, Status]] = MappingProxyType(
     }
 )
 _REFRESH_TERMINAL: Final = frozenset(_INTERRUPTED_STATUS)
+
+
+def _end(
+    span: Span,
+    prepare: Callable[[Span], None],
+    end_time: int,
+    failures: list[Exception],
+) -> None:
+    """End `span` after `prepare`, recording rather than raising failures."""
+    try:
+        prepare(span)
+    except Exception as error:
+        failures.append(error)
+    try:
+        span.end(end_time=end_time)
+    except Exception as error:
+        failures.append(error)
 
 
 def _timestamp_ns(event: RefreshEvent) -> int:

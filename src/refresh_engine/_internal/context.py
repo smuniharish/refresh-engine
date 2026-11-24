@@ -13,7 +13,7 @@ from typing import Any, Final
 from uuid import uuid4
 
 from refresh_engine._internal.redaction import log_failure
-from refresh_engine._internal.values import EMPTY_MAPPING, utc_now
+from refresh_engine._internal.values import EMPTY_MAPPING, Lifecycle, utc_now
 from refresh_engine.events import (
     AsyncEventPublisher,
     EventKind,
@@ -138,17 +138,19 @@ class RunTicket:
     request: RefreshRequest
     refresh_id: str = field(default_factory=lambda: str(uuid4()))
     cancelled_result: RefreshResult | None = None
+    lifecycle: Lifecycle = field(default_factory=Lifecycle)
 
 
 class Emitter:
     """Publish events of one refresh without building them for nobody."""
 
-    __slots__ = ("_correlation_id", "_publisher", "_refresh_id")
+    __slots__ = ("_correlation_id", "_lifecycle", "_publisher", "_refresh_id")
 
     def __init__(self, publisher: EventPublisher, ticket: RunTicket) -> None:
         self._publisher = publisher
         self._refresh_id = ticket.refresh_id
         self._correlation_id = ticket.request.correlation_id
+        self._lifecycle = ticket.lifecycle
 
     @property
     def enabled(self) -> bool:
@@ -190,6 +192,7 @@ class Emitter:
                     correlation_id=self._correlation_id,
                     attributes=attributes,
                     error=error,
+                    _lifecycle=self._lifecycle,
                 )
             )
         except Exception as failure:

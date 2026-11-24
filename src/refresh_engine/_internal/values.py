@@ -13,6 +13,16 @@ from refresh_engine.errors import ConfigurationError
 EMPTY_MAPPING: Final[Mapping[str, Any]] = MappingProxyType({})
 
 
+class Lifecycle:
+    """Identity shared by every event of one refresh.
+
+    Handlers keep weak references to it, so remembering a finished refresh costs
+    nothing once its events are gone.
+    """
+
+    __slots__ = ("__weakref__",)
+
+
 def utc_now() -> datetime:
     """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(UTC)

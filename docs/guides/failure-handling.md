@@ -28,6 +28,14 @@ Lifecycle events carry the original exception, and the structured-logging handle
 logs its traceback with credentials redacted; see
 [Events, logging, and metrics](observability.md).
 
+Event handlers never affect a refresh. A handler that raises is logged and kept in
+`events.errors`; a slow handler makes the bounded event queue drop events instead
+of holding up the refresh, but the event that closes a refresh or resource is
+always delivered when its start was. If the event-delivery task is cancelled while
+a handler runs, that handler receives the event again later, so make handlers with
+side effects idempotent; see
+[Interrupted delivery](observability.md#interrupted-delivery).
+
 ## Statuses
 
 | Status | Meaning |

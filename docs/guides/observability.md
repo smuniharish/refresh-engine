@@ -70,7 +70,11 @@ or break a refresh:
   returns immediately, so a handler may await `engine.close()`. Awaiting them through
   another task, for example with `asyncio.gather`, would wait for the handler
   itself; use `engine.close(wait=False)` there;
-- without subscribers, the engine does not even build events.
+- without subscribers, the engine does not even build events;
+- unsubscribing stops delivery of new events, but a handler that received the start
+  of a refresh or resource still receives the event that closes it, even if it
+  unsubscribed in between, so `has_subscribers` stays `True` until those
+  lifecycles close.
 
 ### Capacity and overload
 
@@ -93,11 +97,52 @@ events = AsyncEventPublisher(capacity=100_000)  # the default
   each operation, so handlers that keep up are not starved by operations that never
   suspend.
 
+- Lifecycles are never left half-delivered. Once the publisher has queued a
+  `REFRESH_STARTED` or `RESOURCE_REFRESH_STARTED` event, it always queues the event
+  that closes it (the refresh's terminal event, or the resource's completed, failed,
+  or skipped event), even past the reserve. Handlers that pair start and end
+  events, such as tracing handlers, therefore never miss the end of a lifecycle
+  whose start they received.
+- The publisher tracks at most `capacity` open lifecycles (refreshes plus
+  resources), so the queue never holds more than `2 * capacity + BOUNDARY_RESERVE`
+  events. A tracked lifecycle is never evicted: while `capacity` lifecycles are
+  open, the start of a new refresh, and of a new resource within a tracked refresh,
+  is not delivered, so every delivered start keeps its closing event. With the
+  default capacity this needs 100,000 concurrently open operations.
+- `events.open_lifecycles` reports the tracked lifecycles, and
+  `events.rejected_lifecycles` counts the starts that were not delivered because
+  tracking was full; they are also counted in `dropped`, and the first of each
+  episode is logged as a warning. The remaining events of a refresh whose start was
+  not delivered are delivered on a best-effort basis.
+- Repeated start events of an open lifecycle are delivered without using capacity.
+  A lifecycle is released by its closing event, which is delivered to the handlers
+  that received its start even after they unsubscribed, so capacity is never held
+  by refreshes that finished. A `REFRESH_STARTED` that your own code publishes and
+  never closes keeps its slot.
+
 Delivery is therefore best-effort under sustained overload: a handler that is slower
 than the refresh loses resource events, and if the reserve is exhausted as well,
-boundary events. Size `capacity` for the largest refresh, keep handlers fast, and
-alert on `dropped`. `drain()` delivers whatever is queued; events that were dropped
-are not delivered later.
+boundary events that do not close an open lifecycle, such as a `REFRESH_STARTED`
+whose refresh is then not delivered at all. Size `capacity` for the largest
+refresh, keep handlers fast, and alert on `dropped`. `drain()` delivers whatever is
+queued; events that were dropped are not delivered later.
+
+### Interrupted delivery
+
+Events are delivered by a background task. If that task is cancelled while a
+handler is running, for example because the event loop is shutting down, the
+publisher keeps the event: the next delivery task, started by `drain()` or the next
+`publish()`, calls the interrupted handler again with the same event and then calls
+the handlers after it, before delivering the rest of the queue. Handlers that had
+already returned are not called again, and a handler unsubscribed in the meantime is
+skipped unless the event closes a lifecycle whose start it received.
+
+The interrupted handler may therefore see an event twice, and side effects it
+performed before the interruption can be repeated; make such handlers idempotent.
+Delivery is never exactly-once. A handler that raises `asyncio.CancelledError` while
+the delivery task is not being cancelled has failed: the failure is logged and
+delivery continues. `events.queued` counts events that have not been taken for
+delivery yet; an interrupted event is not counted while it waits.
 
 ## Structured logging
 
@@ -206,11 +251,32 @@ By default, spans carry only bounded attributes and the generated refresh ID. Pa
 enable it only when those IDs are safe to export. Refresh metadata and error
 messages are never recorded.
 
-Every resource span is ended exactly once. When a refresh ends while resource
-operations are still open, for example after a cancellation or an overall timeout,
-its terminal event ends those spans with an error status and the attribute
-`refresh_engine.resource.interrupted`. Duplicate, late, and out-of-order events
-are ignored, and a failing metric instrument never prevents a span from ending.
+When a refresh ends while resource operations are still open, for example after a
+cancellation or an overall timeout, its terminal event ends those spans with an
+error status and the attribute `refresh_engine.resource.interrupted`. Resource
+spans are only started while their refresh span is open. Because the publisher
+always delivers the event that closes a lifecycle whose start it delivered, every
+span is ended exactly once, even when the queue overflows. A failing metric
+instrument, or a span operation that raises, never prevents the other spans from
+ending.
+
+Duplicate, late, and out-of-order events never start or end a span twice. Every
+event the engine publishes carries an identity shared by all events of its
+refresh, and the handler remembers each finished refresh by that identity for as
+long as any of its events still exists. A replayed event of a finished refresh
+therefore never reopens it, while a delayed `REFRESH_STARTED` of a refresh that has
+not finished is traced, however many other refreshes finished in the meantime and
+whichever publisher delivers it. No global order between publishers is assumed,
+and this memory needs no limit: an identity is forgotten once no event can be
+delivered with it any more.
+
+Events that your own code creates have no such identity. For those, the handler
+remembers the last 1,024 finished refresh IDs and recognizes older refreshes by
+creation order: a `REFRESH_STARTED` event created before the terminal event of a
+refresh the handler has since forgotten is treated as late and ignored. Such a
+start that is delayed until more than 1,024 other refreshes have finished is
+therefore not traced. Memory stays bounded by the open spans, those 1,024 IDs, and
+the identities of events that still exist.
 
 If you implement your own sink, both methods must be asynchronous; the API reference
 documents their signatures.

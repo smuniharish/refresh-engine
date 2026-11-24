@@ -20,9 +20,14 @@ from refresh_engine import (
     EventHandlerLike,
     EventKind,
     EventPublisher,
+    PlanAction,
+    RefreshEngine,
     RefreshEvent,
+    RefreshRequest,
+    Resource,
+    ResourceSnapshot,
 )
-from tests.support import EventRecorder
+from tests.support import EventRecorder, FakeSource
 
 TIMEOUT = 5
 
@@ -786,30 +791,165 @@ async def test_handler_failure_under_saturation_does_not_stop_delivery() -> None
     assert [str(error) for error in publisher.errors] == ["0", "1"]
 
 
-async def test_drain_restarts_delivery_after_the_dispatcher_was_cancelled() -> None:
-    publisher = AsyncEventPublisher(capacity=10)
-    started = asyncio.Event()
-    seen: list[str | None] = []
-
-    async def handler(item: RefreshEvent) -> None:
-        if item.resource_id == "0" and not started.is_set():
-            started.set()
-            await asyncio.Event().wait()
-        seen.append(item.resource_id)
-
-    publisher.subscribe(handler)
-    for index in range(3):
-        publisher.publish(resource_event(index))
-    await started.wait()
+async def cancel_dispatcher(publisher: AsyncEventPublisher) -> None:
     dispatcher = publisher._dispatcher
     assert dispatcher is not None
     dispatcher.cancel()
     await asyncio.wait((dispatcher,))
+
+
+def live_dispatchers() -> list[asyncio.Task[Any]]:
+    return [
+        task
+        for task in asyncio.all_tasks()
+        if task.get_name() == "refresh-engine-event-dispatcher" and not task.done()
+    ]
+
+
+class Gate(EventHandler):
+    """Handler that blocks on the first `blocks` deliveries of resource "0"."""
+
+    def __init__(self, blocks: int = 1) -> None:
+        self.blocks = blocks
+        self.entered = asyncio.Event()
+        self.calls: list[str | None] = []
+
+    async def __call__(self, item: RefreshEvent) -> None:
+        self.calls.append(item.resource_id)
+        if item.resource_id == "0" and self.blocks:
+            self.blocks -= 1
+            self.entered.set()
+            await asyncio.Event().wait()
+
+
+async def test_drain_redelivers_the_event_interrupted_by_dispatcher_cancellation() -> (
+    None
+):
+    publisher = AsyncEventPublisher(capacity=10)
+    gate = Gate()
+    publisher.subscribe(gate)
+    for index in range(3):
+        publisher.publish(resource_event(index))
+    await gate.entered.wait()
+
+    await cancel_dispatcher(publisher)
     assert publisher.queued == 2
+    await drain(publisher)
+
+    assert gate.calls == ["0", "0", "1", "2"]
+    assert publisher.queued == 0
+    assert publisher.errors == ()
+    assert live_dispatchers() == []
+
+
+async def test_cancelling_before_delivery_starts_keeps_every_event_queued() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+    for index in range(3):
+        publisher.publish(resource_event(index))
+
+    await cancel_dispatcher(publisher)
+    assert publisher.queued == 3
+    await drain(publisher)
+
+    assert [item.resource_id for item in recorder.events] == ["0", "1", "2"]
+    assert publisher.queued == 0
+
+
+async def test_handlers_after_the_interrupted_one_receive_the_event_once() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    before, after = EventRecorder(), EventRecorder()
+    gate = Gate()
+    publisher.subscribe(before)
+    publisher.subscribe(gate)
+    publisher.subscribe(after)
+    publisher.publish(resource_event(0))
+    await gate.entered.wait()
+
+    await cancel_dispatcher(publisher)
+    assert publisher.queued == 0
+    await drain(publisher)
+
+    assert [item.resource_id for item in before.events] == ["0"]
+    assert gate.calls == ["0", "0"]
+    assert [item.resource_id for item in after.events] == ["0"]
+
+
+async def test_publishing_after_cancellation_redelivers_before_new_events() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    gate = Gate()
+    publisher.subscribe(gate)
+    publisher.publish(resource_event(0))
+    publisher.publish(resource_event(1))
+    await gate.entered.wait()
+    await cancel_dispatcher(publisher)
+
+    publisher.publish(resource_event(2))
+    publisher.publish(resource_event(3))
+    await drain(publisher)
+
+    assert gate.calls == ["0", "0", "1", "2", "3"]
+
+
+async def test_repeated_cancellation_and_restart_cycles_lose_no_events() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    gate = Gate(blocks=3)
+    publisher.subscribe(gate)
+    publisher.publish(resource_event(0))
+    publisher.publish(resource_event(1))
+    for _ in range(3):
+        await gate.entered.wait()
+        gate.entered.clear()
+        await cancel_dispatcher(publisher)
+        assert publisher.queued == 1
+        assert live_dispatchers() == []
+        if gate.blocks:
+            publisher._start()
 
     await drain(publisher)
 
-    assert seen == ["1", "2"]
+    assert gate.calls == ["0", "0", "0", "0", "1"]
+    assert publisher.queued == 0
+    assert publisher.dropped == 0
+    assert live_dispatchers() == []
+
+
+async def test_an_unsubscribed_interrupted_handler_is_not_called_again() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    gate = Gate()
+    after = EventRecorder()
+    publisher.subscribe(gate)
+    publisher.subscribe(after)
+    publisher.publish(resource_event(0))
+    await gate.entered.wait()
+    await cancel_dispatcher(publisher)
+
+    publisher.unsubscribe(gate)
+    await drain(publisher)
+
+    assert gate.calls == ["0"]
+    assert [item.resource_id for item in after.events] == ["0"]
+
+
+async def test_a_handler_raising_cancelled_error_on_its_own_is_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    recorder = EventRecorder()
+
+    async def cancelled(item: RefreshEvent) -> None:
+        raise asyncio.CancelledError
+
+    publisher.subscribe(cancelled)
+    publisher.subscribe(recorder)
+    publisher.publish(resource_event(0))
+    publisher.publish(resource_event(1))
+    await drain(publisher)
+
+    assert [item.resource_id for item in recorder.events] == ["0", "1"]
+    assert publisher.errors == ()
+    assert len(publisher_warnings(caplog)) == 2
     assert publisher.queued == 0
 
 
@@ -828,3 +968,463 @@ async def test_drain_leaves_events_queued_when_no_handler_remains() -> None:
 
     assert publisher.queued == 1
     assert recorder.events == []
+
+
+def lifecycle(
+    kind: EventKind, refresh_id: str, resource_id: str | None = None
+) -> RefreshEvent:
+    return RefreshEvent(kind, refresh_id=refresh_id, resource_id=resource_id)
+
+
+def flood(publisher: AsyncEventPublisher) -> None:
+    for _ in range(publisher.capacity + AsyncEventPublisher.BOUNDARY_RESERVE + 10):
+        publisher.publish(event(EventKind.SCHEDULER_RUN_FAILED))
+
+
+async def test_closing_events_are_kept_when_the_reserve_is_exhausted() -> None:
+    publisher = AsyncEventPublisher(capacity=4)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    publisher.publish(lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    flood(publisher)
+    full = publisher.queued
+    assert full == 4 + AsyncEventPublisher.BOUNDARY_RESERVE
+    publisher.publish(lifecycle(EventKind.REFRESH_STARTED, "late"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "late", "b"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_FAILED, "r", "a"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_FAILED, "r", "a"))
+    publisher.publish(lifecycle(EventKind.REFRESH_FAILED, "r"))
+    publisher.publish(lifecycle(EventKind.REFRESH_FAILED, "r"))
+    publisher.publish(lifecycle(EventKind.REFRESH_FAILED, "late"))
+    assert publisher.queued == full + 2
+    assert publisher.peak_queued == full + 2
+    await drain(publisher)
+
+    delivered = [
+        (item.kind, item.refresh_id, item.resource_id)
+        for item in recorder.events
+        if item.kind is not EventKind.SCHEDULER_RUN_FAILED
+    ]
+    assert delivered == [
+        (EventKind.REFRESH_STARTED, "r", None),
+        (EventKind.RESOURCE_REFRESH_STARTED, "r", "a"),
+        (EventKind.RESOURCE_REFRESH_FAILED, "r", "a"),
+        (EventKind.REFRESH_FAILED, "r", None),
+    ]
+    assert publisher._lifecycles == {}
+    assert publisher._tracked == 0
+
+
+async def deliver(publisher: AsyncEventPublisher, item: RefreshEvent) -> None:
+    publisher.publish(item)
+    await drain(publisher)
+
+
+async def test_full_lifecycle_tracking_rejects_new_starts_instead_of_evicting(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="refresh_engine")
+    publisher = AsyncEventPublisher(capacity=3)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    for refresh_id in ("r1", "r2"):
+        await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, refresh_id))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r2", "a"))
+    assert publisher.open_lifecycles == 3
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r2", "b"))
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r3"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r3", "c"))
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r1"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r2", "a"))
+    assert publisher._lifecycles == {"r1": set(), "r2": {"a"}}
+    assert publisher.open_lifecycles == 3
+    assert publisher.rejected_lifecycles == 2
+    assert publisher.dropped == 2
+    flood(publisher)
+    for closer in (  # The queue is full, so only tracked lifecycles are closed.
+        lifecycle(EventKind.RESOURCE_REFRESH_COMPLETED, "r2", "b"),
+        lifecycle(EventKind.RESOURCE_REFRESH_COMPLETED, "r2", "a"),
+        lifecycle(EventKind.REFRESH_COMPLETED, "r1"),
+        lifecycle(EventKind.REFRESH_COMPLETED, "r2"),
+        lifecycle(EventKind.REFRESH_COMPLETED, "r3"),
+    ):
+        publisher.publish(closer)
+    await drain(publisher)
+
+    delivered = [
+        (item.kind, item.refresh_id, item.resource_id)
+        for item in recorder.events
+        if item.kind is not EventKind.SCHEDULER_RUN_FAILED
+    ]
+    assert delivered == [
+        (EventKind.REFRESH_STARTED, "r1", None),
+        (EventKind.REFRESH_STARTED, "r2", None),
+        (EventKind.RESOURCE_REFRESH_STARTED, "r2", "a"),
+        (EventKind.RESOURCE_REFRESH_STARTED, "r3", "c"),
+        (EventKind.REFRESH_STARTED, "r1", None),
+        (EventKind.RESOURCE_REFRESH_STARTED, "r2", "a"),
+        (EventKind.RESOURCE_REFRESH_COMPLETED, "r2", "a"),
+        (EventKind.REFRESH_COMPLETED, "r1", None),
+        (EventKind.REFRESH_COMPLETED, "r2", None),
+    ]
+    assert publisher.open_lifecycles == 0
+    assert [record.getMessage() for record in publisher_warnings(caplog)] == [
+        "3 refresh lifecycles are open (capacity 3); not delivering new lifecycle "
+        "starts until some close",
+        "refresh event queue is full (capacity 3); dropping events until handlers "
+        "catch up",
+    ]
+
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r4"))
+    assert publisher._lifecycles == {"r4": set()}
+    assert publisher.rejected_lifecycles == 2
+
+
+@pytest.mark.parametrize(
+    "closer",
+    [
+        EventKind.REFRESH_COMPLETED,
+        EventKind.REFRESH_FAILED,
+        EventKind.REFRESH_CANCELLED,
+        EventKind.REFRESH_SKIPPED,
+    ],
+)
+async def test_every_terminal_event_releases_lifecycle_capacity(
+    closer: EventKind,
+) -> None:
+    publisher = AsyncEventPublisher(capacity=2)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r1"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r1", "a"))
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r2"))
+    await deliver(publisher, lifecycle(closer, "r1"))
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r2"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r2", "b"))
+    await drain(publisher)
+
+    assert publisher._lifecycles == {"r2": {"b"}}
+    assert publisher.rejected_lifecycles == 1
+    assert [item.refresh_id for item in recorder.events] == [
+        "r1",
+        "r1",
+        "r1",
+        "r2",
+        "r2",
+    ]
+
+
+@pytest.mark.parametrize(
+    "closer",
+    [
+        EventKind.RESOURCE_REFRESH_COMPLETED,
+        EventKind.RESOURCE_REFRESH_FAILED,
+        EventKind.RESOURCE_REFRESH_SKIPPED,
+    ],
+)
+async def test_every_resource_closer_releases_lifecycle_capacity(
+    closer: EventKind,
+) -> None:
+    publisher = AsyncEventPublisher(capacity=2)
+    publisher.subscribe(EventRecorder())
+
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "b"))
+    await deliver(publisher, lifecycle(closer, "r", "a"))
+    await deliver(publisher, lifecycle(closer, "r", "a"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "b"))
+    await drain(publisher)
+
+    assert publisher._lifecycles == {"r": {"b"}}
+    assert publisher.open_lifecycles == 2
+    assert publisher.rejected_lifecycles == 1
+
+
+async def test_concurrent_refreshes_never_exceed_the_lifecycle_capacity() -> None:
+    publisher = AsyncEventPublisher(capacity=4)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+    peak = 0
+
+    async def refresh(number: int) -> None:
+        nonlocal peak
+        refresh_id = f"r{number}"
+        publisher.publish(lifecycle(EventKind.REFRESH_STARTED, refresh_id))
+        for resource_id in ("a", "b"):
+            publisher.publish(
+                lifecycle(EventKind.RESOURCE_REFRESH_STARTED, refresh_id, resource_id)
+            )
+            peak = max(peak, publisher.open_lifecycles)
+            await asyncio.sleep(0)
+            publisher.publish(
+                lifecycle(EventKind.RESOURCE_REFRESH_COMPLETED, refresh_id, resource_id)
+            )
+        publisher.publish(lifecycle(EventKind.REFRESH_COMPLETED, refresh_id))
+
+    await asyncio.gather(*(refresh(number) for number in range(20)))
+    await drain(publisher)
+
+    assert peak == 4
+    assert publisher.open_lifecycles == 0
+    assert publisher.rejected_lifecycles > 0
+    opened: dict[tuple[str | None, str | None], int] = {}
+    for item in recorder.events:
+        key = (item.refresh_id, item.resource_id)
+        if item.kind in {EventKind.REFRESH_STARTED, EventKind.RESOURCE_REFRESH_STARTED}:
+            opened[key] = opened.get(key, 0) + 1
+        elif key in opened:
+            opened[key] -= 1
+    assert set(opened.values()) == {0}
+    assert (
+        sum(item.kind is EventKind.REFRESH_STARTED for item in recorder.events)
+        + publisher.rejected_lifecycles
+        >= 20
+    )
+
+
+def kinds(recorder: EventRecorder) -> list[tuple[EventKind, str | None, str | None]]:
+    return [(item.kind, item.refresh_id, item.resource_id) for item in recorder.events]
+
+
+async def test_the_last_unsubscribed_handler_still_receives_open_lifecycle_ends() -> (
+    None
+):
+    publisher = AsyncEventPublisher(capacity=2)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+    publisher.publish(lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    await drain(publisher)
+    publisher.unsubscribe(recorder)
+    subscribed = [publisher.has_subscribers]
+
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "b"))
+    publisher.publish(lifecycle(EventKind.DISCOVERY_COMPLETED, "r"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_COMPLETED, "r", "a"))
+    assert publisher._lifecycles == {"r": set()}
+    publisher.publish(lifecycle(EventKind.REFRESH_COMPLETED, "r"))
+    publisher.publish(lifecycle(EventKind.REFRESH_COMPLETED, "r"))
+    await drain(publisher)
+
+    assert kinds(recorder) == [
+        (EventKind.REFRESH_STARTED, "r", None),
+        (EventKind.RESOURCE_REFRESH_STARTED, "r", "a"),
+        (EventKind.RESOURCE_REFRESH_COMPLETED, "r", "a"),
+        (EventKind.REFRESH_COMPLETED, "r", None),
+    ]
+    assert publisher.open_lifecycles == 0
+    assert publisher._recipients == {}
+    subscribed.append(publisher.has_subscribers)
+    assert subscribed == [True, False]
+    assert publisher.dropped == 0
+
+
+async def test_unsubscribing_stops_new_lifecycles_but_closes_open_ones() -> None:
+    publisher = AsyncEventPublisher()
+    leaving, staying = EventRecorder(), EventRecorder()
+    publisher.subscribe(leaving)
+    publisher.subscribe(staying)
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r1"))
+    publisher.unsubscribe(leaving)
+
+    for item in (
+        lifecycle(EventKind.DISCOVERY_STARTED, "r1"),
+        lifecycle(EventKind.REFRESH_STARTED, "r2"),
+        lifecycle(EventKind.REFRESH_FAILED, "r1"),
+        lifecycle(EventKind.REFRESH_COMPLETED, "r2"),
+    ):
+        publisher.publish(item)
+    await drain(publisher)
+
+    assert kinds(leaving) == [
+        (EventKind.REFRESH_STARTED, "r1", None),
+        (EventKind.REFRESH_FAILED, "r1", None),
+    ]
+    assert kinds(staying) == [
+        (EventKind.REFRESH_STARTED, "r1", None),
+        (EventKind.DISCOVERY_STARTED, "r1", None),
+        (EventKind.REFRESH_STARTED, "r2", None),
+        (EventKind.REFRESH_FAILED, "r1", None),
+        (EventKind.REFRESH_COMPLETED, "r2", None),
+    ]
+
+
+async def test_a_resubscribed_or_new_handler_receives_each_lifecycle_end_once() -> None:
+    publisher = AsyncEventPublisher()
+    first, second = EventRecorder(), EventRecorder()
+    publisher.subscribe(first)
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.unsubscribe(first)
+    publisher.subscribe(second)
+    publisher.subscribe(first)
+
+    await deliver(publisher, lifecycle(EventKind.REFRESH_COMPLETED, "r"))
+
+    assert kinds(first) == [
+        (EventKind.REFRESH_STARTED, "r", None),
+        (EventKind.REFRESH_COMPLETED, "r", None),
+    ]
+    assert kinds(second) == [(EventKind.REFRESH_COMPLETED, "r", None)]
+
+
+async def test_a_refresh_end_reaches_handlers_that_saw_only_a_resource_start() -> None:
+    publisher = AsyncEventPublisher()
+    early, late = EventRecorder(), EventRecorder()
+    publisher.subscribe(early)
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.subscribe(late)
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    await deliver(publisher, lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    publisher.unsubscribe(early)
+    publisher.unsubscribe(late)
+
+    await deliver(publisher, lifecycle(EventKind.REFRESH_CANCELLED, "r"))
+
+    assert kinds(late) == [
+        (EventKind.RESOURCE_REFRESH_STARTED, "r", "a"),
+        (EventKind.RESOURCE_REFRESH_STARTED, "r", "a"),
+        (EventKind.REFRESH_CANCELLED, "r", None),
+    ]
+    assert kinds(early)[-1] == (EventKind.REFRESH_CANCELLED, "r", None)
+    assert publisher._recipients == {}
+
+
+async def test_a_start_undelivered_before_the_last_unsubscribe_owes_no_end() -> None:
+    publisher = AsyncEventPublisher()
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+    publisher.publish(lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.unsubscribe(recorder)
+
+    publisher.publish(lifecycle(EventKind.REFRESH_COMPLETED, "r"))
+    await drain(publisher)
+
+    assert recorder.events == []
+    assert publisher.queued == 0
+    assert publisher.has_subscribers is False
+
+
+async def test_an_interrupted_lifecycle_end_is_redelivered_after_unsubscribing() -> (
+    None
+):
+    publisher = AsyncEventPublisher()
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls: list[EventKind] = []
+
+    async def gate(item: RefreshEvent) -> None:
+        calls.append(item.kind)
+        if item.kind is EventKind.REFRESH_COMPLETED and not release.is_set():
+            entered.set()
+            await asyncio.Event().wait()
+
+    publisher.subscribe(gate)
+    await deliver(publisher, lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.unsubscribe(gate)
+    publisher.publish(lifecycle(EventKind.REFRESH_COMPLETED, "r"))
+    await entered.wait()
+    dispatcher = publisher._dispatcher
+    assert dispatcher is not None
+    dispatcher.cancel()
+    await asyncio.wait((dispatcher,))
+    assert publisher.has_subscribers is False
+    release.set()
+
+    await drain(publisher)
+
+    assert calls == [
+        EventKind.REFRESH_STARTED,
+        EventKind.REFRESH_COMPLETED,
+        EventKind.REFRESH_COMPLETED,
+    ]
+    assert publisher._owed == 0
+
+
+async def test_lifecycles_left_open_by_the_last_unsubscribe_are_closed() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    async def operation(
+        resource: Resource,
+        snapshot: ResourceSnapshot | None,
+        action: PlanAction,
+        request: RefreshRequest,
+    ) -> None:
+        await publisher.drain()
+        assert publisher.open_lifecycles == 2
+        publisher.unsubscribe(recorder)
+
+    engine = RefreshEngine(FakeSource({"a": 1}), operation, events=publisher)
+    await engine.refresh()
+    await engine.close()
+    await drain(publisher)
+
+    assert publisher.open_lifecycles == 0
+    assert publisher._lifecycles == {}
+    assert publisher.has_subscribers is False
+    delivered = [item.kind for item in recorder.events]
+    assert delivered[0] is EventKind.REFRESH_STARTED
+    assert delivered[-2:] == [
+        EventKind.RESOURCE_REFRESH_COMPLETED,
+        EventKind.REFRESH_COMPLETED,
+    ]
+    assert EventKind.RESOURCE_REFRESH_STARTED in delivered
+
+
+async def test_engine_events_share_one_lifecycle_identity_per_refresh() -> None:
+    publisher = AsyncEventPublisher()
+    recorder = EventRecorder()
+    publisher.subscribe(recorder)
+
+    async def operation(
+        resource: Resource,
+        snapshot: ResourceSnapshot | None,
+        action: PlanAction,
+        request: RefreshRequest,
+    ) -> None:
+        return None
+
+    engine = RefreshEngine(FakeSource({"a": 1, "b": 2}), operation, events=publisher)
+    await engine.refresh()
+    await engine.refresh()
+    await engine.close()
+    await drain(publisher)
+
+    identities: dict[str | None, set[int]] = {}
+    for item in recorder.events:
+        assert item._lifecycle is not None
+        identities.setdefault(item.refresh_id, set()).add(id(item._lifecycle))
+    assert len(identities) == 2
+    assert all(len(tokens) == 1 for tokens in identities.values())
+    first, second = recorder.events[0], recorder.events[-1]
+    assert first._lifecycle is not second._lifecycle
+    assert dataclasses.replace(first)._lifecycle is first._lifecycle
+    assert first == dataclasses.replace(first, _lifecycle=None)
+
+
+async def test_events_without_a_tracked_lifecycle_are_not_tracked() -> None:
+    publisher = AsyncEventPublisher(capacity=10)
+    publisher.subscribe(EventRecorder())
+
+    publisher.publish(event(EventKind.REFRESH_STARTED))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "unknown", "a"))
+    publisher.publish(lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.publish(lifecycle(EventKind.REFRESH_STARTED, "r"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_STARTED, "r", "a"))
+    publisher.publish(event(EventKind.REFRESH_COMPLETED))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_SKIPPED, "r", "b"))
+    publisher.publish(lifecycle(EventKind.RESOURCE_REFRESH_SKIPPED, "other", "a"))
+    publisher.publish(lifecycle(EventKind.DISCOVERY_STARTED, "r"))
+    assert publisher._tracked == 2
+    publisher.publish(lifecycle(EventKind.REFRESH_COMPLETED, "r"))
+    await drain(publisher)
+
+    assert publisher._lifecycles == {}
+    assert publisher._tracked == 0
