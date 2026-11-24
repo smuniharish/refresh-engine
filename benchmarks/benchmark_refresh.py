@@ -285,30 +285,32 @@ def git_revision() -> str | None:
 
 def physical_memory_bytes() -> int | None:
     """Return the installed physical memory, if the platform reports it."""
-    if sys.platform != "win32":
+    total: int | None = None
+    if sys.platform == "win32":
+
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = (
+                ("length", ctypes.c_ulong),
+                ("load", ctypes.c_ulong),
+                ("total_physical", ctypes.c_ulonglong),
+                ("available_physical", ctypes.c_ulonglong),
+                ("total_page_file", ctypes.c_ulonglong),
+                ("available_page_file", ctypes.c_ulonglong),
+                ("total_virtual", ctypes.c_ulonglong),
+                ("available_virtual", ctypes.c_ulonglong),
+                ("available_extended_virtual", ctypes.c_ulonglong),
+            )
+
+        status = MemoryStatus()
+        status.length = ctypes.sizeof(MemoryStatus)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            total = int(status.total_physical)
+    else:
         try:
-            return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+            total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
         except (OSError, ValueError):
-            return None
-
-    class MemoryStatus(ctypes.Structure):
-        _fields_ = (
-            ("length", ctypes.c_ulong),
-            ("load", ctypes.c_ulong),
-            ("total_physical", ctypes.c_ulonglong),
-            ("available_physical", ctypes.c_ulonglong),
-            ("total_page_file", ctypes.c_ulonglong),
-            ("available_page_file", ctypes.c_ulonglong),
-            ("total_virtual", ctypes.c_ulonglong),
-            ("available_virtual", ctypes.c_ulonglong),
-            ("available_extended_virtual", ctypes.c_ulonglong),
-        )
-
-    status = MemoryStatus()
-    status.length = ctypes.sizeof(MemoryStatus)
-    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-        return int(status.total_physical)
-    return None
+            total = None
+    return total
 
 
 def main() -> None:
